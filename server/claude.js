@@ -33,7 +33,9 @@ List every distinct item. Be specific:
 Categorize each item by stackability:
 
 CATEGORY A — NON-STACKABLE (use 4ft effective height):
-Sofas, loveseats, recliners, mattresses, box springs, upholstered chairs, hospital beds, patient recliners, wheelchairs (unfolded)
+Sofas, loveseats, recliners, upholstered chairs, hospital beds (with frame), patient recliners, wheelchairs (unfolded)
+
+NOTE: Mattresses are NOT Category A. Mattresses can be stacked, stood on side, or have items placed on top. Use actual dimensions for mattresses (see MATTRESSES section below).
 
 CATEGORY B — LIMITED STACKING (use actual height + 1.5ft buffer):
 Dressers, desks, tables, bookcases, medical carts, equipment cabinets, exam tables, file cabinets, large monitors/TVs
@@ -93,9 +95,17 @@ STATE YOUR MEASUREMENTS EXPLICITLY with the math shown.
 STEP 4: CALCULATE TRUCK SPACE CONSUMED
 ═══════════════════════════════════════
 
-FOR CATEGORY A (Non-stackable — sofas, mattresses, hospital beds, recliners):
+FOR CATEGORY A (Non-stackable — sofas, recliners, upholstered furniture):
   Truck Space = Footprint × 4 feet (full truck height consumed)
   Example: 3-seat sofa, 7ft × 3ft footprint = 7 × 3 × 4 = 84 cu ft = 3.1 CY
+  
+  IMPORTANT: Mattresses are NOT Category A. Do not apply 4ft height to mattresses.
+
+FOR MATTRESSES (Category B — stackable, can stand on side):
+  Use the known item volumes directly. Do NOT use 4ft effective height.
+  Example: Queen mattress = 1.2-1.5 CY (not 5 CY!)
+  If multiple mattresses: First mattress full value, add 80% for each additional
+  Example: 2 queen mattresses = 1.35 + (1.35 × 0.8) = 2.4 CY total
 
 FOR CATEGORY B (Limited stacking — dressers, desks, carts, cabinets):
   Truck Space = L × W × (Actual Height + 1.5 ft buffer)
@@ -122,8 +132,9 @@ KNOWN ITEM VOLUMES — TRUCK SPACE CONSUMED (use as FLOOR values)
 ═══════════════════════════════════════
 
 MEDICAL EQUIPMENT:
-- Hospital bed (standard, with rails): 3.5-4.0 CY
-- Hospital bed (bariatric/wide): 4.5-5.0 CY
+- Hospital bed frame only (no mattress): 2.0-2.5 CY
+- Hospital bed with mattress: 2.5-3.0 CY
+- Hospital bed (bariatric/wide): 3.5-4.0 CY
 - Patient recliner/treatment chair: 2.0-2.5 CY
 - Standard wheelchair (unfolded): 1.0-1.2 CY
 - Wheelchair (folded): 0.4-0.5 CY
@@ -144,20 +155,37 @@ MEDICAL EQUIPMENT:
 - Sharps container (wall-mount): 0.05 CY
 - Sharps container (floor stand): 0.3-0.4 CY
 
-MATTRESSES & BEDDING (NON-STACKABLE — use 4ft effective height):
-- King mattress: 4.5-5.0 CY
-- Queen mattress: 3.5-4.0 CY
-- Full mattress: 3.0-3.5 CY
-- Twin mattress: 2.5-3.0 CY
-- Twin XL (hospital): 2.8-3.2 CY
+MATTRESSES & BEDDING (Category B — can be stacked or stood on side):
+- King mattress: 1.5-1.8 CY (flat) or 0.8-1.0 CY (on side)
+- Queen mattress: 1.2-1.5 CY (flat) or 0.6-0.8 CY (on side)
+- Full mattress: 1.0-1.2 CY (flat) or 0.5-0.7 CY (on side)
+- Twin mattress: 0.7-0.9 CY (flat) or 0.4-0.5 CY (on side)
+- Twin XL mattress: 0.8-1.0 CY (flat) or 0.4-0.5 CY (on side)
 - Box spring (any size): same as matching mattress
-- Hospital mattress (foam, 6"): 2.5-3.0 CY
+- Hospital mattress (foam, 6"): 0.6-0.8 CY
+- Mattress + box spring SET: multiply single mattress value by 1.8
 
-SEATING (NON-STACKABLE):
+NOTE: When estimating mattresses, assume FLAT position unless photo shows otherwise. Multiple mattresses stack efficiently — do NOT multiply by number of mattresses, instead add ~80% for each additional mattress.
+
+BED FRAMES (Category B — disassembled or can have items placed inside):
+- King bed frame (metal): 0.8-1.0 CY
+- King bed frame (wood/platform): 1.2-1.5 CY
+- Queen bed frame (metal): 0.6-0.8 CY
+- Queen bed frame (wood/platform): 1.0-1.2 CY
+- Twin/Full bed frame (metal): 0.4-0.6 CY
+- Twin/Full bed frame (wood): 0.7-0.9 CY
+- Headboard only: 0.3-0.5 CY
+- Footboard only: 0.2-0.3 CY
+- Bunk bed frame (disassembled): 1.5-2.0 CY
+- Complete bed (frame + mattress + box spring): Add frame + mattress values
+
+SEATING (NON-STACKABLE — Category A):
 - 3-seat sofa: 3.0-3.5 CY
 - Loveseat: 2.0-2.5 CY
 - Recliner: 2.0-2.5 CY
-- Sleeper sofa: 4.0-4.5 CY
+- Sleeper sofa (closed): 3.5-4.0 CY
+- Futon (folded as couch): 1.8-2.2 CY
+- Futon (flat as bed): 2.5-3.0 CY
 - Sectional (per section): 2.5-3.0 CY
 - Waiting room chair (upholstered): 1.0-1.2 CY
 - Waiting room chair (stackable/plastic): 0.3-0.4 CY
