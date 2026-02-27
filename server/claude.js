@@ -397,6 +397,70 @@ async function callClaude(params) {
   return text;
 }
 
+// Call Gemini API (supports 2.5 Flash and 2.5 Pro)
+async function callGemini(params) {
+  const { googleApiKey, photos, geminiModel } = params;
+
+  if (!googleApiKey) {
+    return null; // Gemini not configured, skip
+  }
+
+  const model = geminiModel || "gemini-2.5-flash";
+  const userText = buildUserContent(params);
+
+  const parts = [{ text: userText }];
+
+  for (let i = 0; i < photos.length; i++) {
+    const photo = photos[i];
+    parts.push({
+      inline_data: {
+        mime_type: photo.mediaType,
+        data: photo.base64,
+      },
+    });
+    if (photo.overlay) {
+      parts.push({ text: `[Markup overlay for photo ${i + 1} — green = include/remove, red = exclude/stays]` });
+      parts.push({
+        inline_data: {
+          mime_type: "image/png",
+          data: photo.overlay,
+        },
+      });
+    }
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${googleApiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: "user", parts }],
+          generationConfig: { maxOutputTokens: 2048 },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      throw new Error(`Gemini API error ${response.status}: ${errBody}`);
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts
+      ?.filter((p) => p.text)
+      .map((p) => p.text)
+      .join("\n") ?? "";
+
+    return text;
+  } catch (err) {
+    console.error("Gemini API error:", err.message);
+    return null;
+  }
+}
+
 // Call OpenAI API
 async function callOpenAI(params) {
   const { openaiApiKey, photos } = params;
@@ -475,118 +539,141 @@ function parseResponse(text) {
   }
 }
 
-// Cross-validate and merge results
-function crossValidate(claudeResult, gptResult) {
+// Cross-validate and merge results from multiple models
+function crossValidate(claudeResult, gptResult, geminiResult) {
+  // Collect all successful results with labels
+  const models = [{ label: "Claude", result: claudeResult }];
+  if (gptResult) models.push({ label: "GPT", result: gptResult });
+  if (geminiResult) models.push({ label: "Gemini", result: geminiResult });
+
   // If only Claude worked, use it
-  if (!gptResult) {
+  if (models.length === 1) {
+    const skipped = [];
+    if (!gptResult) skipped.push("OpenAI");
+    if (!geminiResult) skipped.push("Gemini");
     return {
       ...claudeResult,
       crossValidation: {
         method: "single_model",
         claudeEstimate: claudeResult.likely,
         gptEstimate: null,
+        geminiEstimate: null,
         agreement: null,
-        note: "OpenAI not configured or failed — using Claude only",
+        note: `${skipped.join(" and ")} not configured or failed — using Claude only`,
       },
     };
   }
-  
-  const claudeLikely = claudeResult.likely;
-  const gptLikely = gptResult.likely;
-  
-  // Calculate percentage difference
-  const avg = (claudeLikely + gptLikely) / 2;
-  const diff = Math.abs(claudeLikely - gptLikely);
-  const pctDiff = avg > 0 ? (diff / avg) * 100 : 0;
-  
+
+  // Calculate pairwise agreements
+  const estimates = models.map((m) => ({ label: m.label, likely: m.result.likely }));
+  const likelies = estimates.map((e) => e.likely);
+  const avg = likelies.reduce((a, b) => a + b, 0) / likelies.length;
+  const maxDiff = Math.max(...likelies) - Math.min(...likelies);
+  const pctDiff = avg > 0 ? (maxDiff / avg) * 100 : 0;
+
+  // Merge all items identified
+  const allItems = [...new Set(models.flatMap((m) => m.result.itemsIdentified))];
+
+  // Build combined reasoning
+  const modelLabels = models.map((m) => m.label).join(" + ");
+  const reasoningSections = models.map((m) =>
+    `--- ${m.label.toUpperCase()} ANALYSIS (${m.result.likely} CY) ---\n${m.result.reasoning}`
+  ).join("\n\n");
+
   let finalResult;
   let agreement;
   let note;
-  
+
   if (pctDiff <= 15) {
-    // Strong agreement — average the results, boost confidence
+    // Strong agreement
     agreement = "STRONG";
-    note = `Both models agree within 15% (${pctDiff.toFixed(1)}% difference). High reliability.`;
-    
+    note = `${models.length} models agree within 15% (${pctDiff.toFixed(1)}% max spread). High reliability.`;
+
     finalResult = {
-      low: Math.min(claudeResult.low, gptResult.low),
-      high: Math.max(claudeResult.high, gptResult.high),
+      low: Math.min(...models.map((m) => m.result.low)),
+      high: Math.max(...models.map((m) => m.result.high)),
       likely: parseFloat(avg.toFixed(2)),
       confidence: "High",
-      truckFraction: claudeResult.truckFraction, // Use Claude's fraction
-      reasoning: `CROSS-VALIDATED ESTIMATE (Claude + GPT agree)\n\n--- CLAUDE ANALYSIS ---\n${claudeResult.reasoning}\n\n--- GPT ANALYSIS ---\n${gptResult.reasoning}`,
-      itemsIdentified: [...new Set([...claudeResult.itemsIdentified, ...gptResult.itemsIdentified])],
+      truckFraction: claudeResult.truckFraction,
+      reasoning: `CROSS-VALIDATED ESTIMATE (${modelLabels} agree)\n\n${reasoningSections}`,
+      itemsIdentified: allItems,
       scaleReference: claudeResult.scaleReference,
       notes: claudeResult.notes,
     };
   } else if (pctDiff <= 30) {
-    // Moderate agreement — use weighted average, medium confidence
+    // Moderate agreement
     agreement = "MODERATE";
-    note = `Models differ by ${pctDiff.toFixed(1)}%. Using weighted average. Review recommended.`;
-    
-    // Weight toward the more conservative (higher) estimate for hospital contracts
-    const conservative = Math.max(claudeLikely, gptLikely);
+    note = `Models differ by up to ${pctDiff.toFixed(1)}%. Using weighted average. Review recommended.`;
+
+    const conservative = Math.max(...likelies);
     const weighted = avg * 0.6 + conservative * 0.4;
-    
+
+    const diffSummary = estimates.map((e) => `${e.label}=${e.likely} CY`).join(", ");
+
     finalResult = {
-      low: Math.min(claudeResult.low, gptResult.low),
-      high: Math.max(claudeResult.high, gptResult.high),
+      low: Math.min(...models.map((m) => m.result.low)),
+      high: Math.max(...models.map((m) => m.result.high)),
       likely: parseFloat(weighted.toFixed(2)),
       confidence: "Medium",
       truckFraction: claudeResult.truckFraction,
-      reasoning: `CROSS-VALIDATED ESTIMATE (Moderate agreement — ${pctDiff.toFixed(1)}% difference)\n\n--- CLAUDE ANALYSIS (${claudeLikely} CY) ---\n${claudeResult.reasoning}\n\n--- GPT ANALYSIS (${gptLikely} CY) ---\n${gptResult.reasoning}`,
-      itemsIdentified: [...new Set([...claudeResult.itemsIdentified, ...gptResult.itemsIdentified])],
+      reasoning: `CROSS-VALIDATED ESTIMATE (Moderate agreement — ${pctDiff.toFixed(1)}% spread)\n\n${reasoningSections}`,
+      itemsIdentified: allItems,
       scaleReference: claudeResult.scaleReference,
-      notes: `⚠️ MODELS DIFFER: Claude=${claudeLikely} CY, GPT=${gptLikely} CY. ${claudeResult.notes}`,
+      notes: `⚠️ MODELS DIFFER: ${diffSummary}. ${claudeResult.notes}`,
     };
   } else {
-    // Significant disagreement — flag for human review
+    // Significant disagreement
     agreement = "DISAGREEMENT";
-    note = `⚠️ SIGNIFICANT DISAGREEMENT: ${pctDiff.toFixed(1)}% difference. Human review required.`;
-    
-    // Use the higher estimate but flag prominently
-    const higher = Math.max(claudeLikely, gptLikely);
-    const lower = Math.min(claudeLikely, gptLikely);
-    
+    note = `⚠️ SIGNIFICANT DISAGREEMENT: ${pctDiff.toFixed(1)}% spread. Human review required.`;
+
+    const diffSummary = estimates.map((e) => `${e.label}=${e.likely} CY`).join(", ");
+
     finalResult = {
-      low: lower,
-      high: higher,
+      low: Math.min(...likelies),
+      high: Math.max(...likelies),
       likely: parseFloat(avg.toFixed(2)),
       confidence: "Low",
       truckFraction: claudeResult.truckFraction,
-      reasoning: `⚠️ CROSS-VALIDATION FAILED — HUMAN REVIEW REQUIRED\nClaude estimate: ${claudeLikely} CY\nGPT estimate: ${gptLikely} CY\nDifference: ${pctDiff.toFixed(1)}%\n\n--- CLAUDE ANALYSIS ---\n${claudeResult.reasoning}\n\n--- GPT ANALYSIS ---\n${gptResult.reasoning}`,
-      itemsIdentified: [...new Set([...claudeResult.itemsIdentified, ...gptResult.itemsIdentified])],
+      reasoning: `⚠️ CROSS-VALIDATION FAILED — HUMAN REVIEW REQUIRED\n${diffSummary}\nMax spread: ${pctDiff.toFixed(1)}%\n\n${reasoningSections}`,
+      itemsIdentified: allItems,
       scaleReference: claudeResult.scaleReference,
-      notes: `🚨 REQUIRES HUMAN REVIEW: Claude=${claudeLikely} CY, GPT=${gptLikely} CY (${pctDiff.toFixed(1)}% apart). ${claudeResult.notes}`,
+      notes: `🚨 REQUIRES HUMAN REVIEW: ${diffSummary} (${pctDiff.toFixed(1)}% apart). ${claudeResult.notes}`,
     };
   }
-  
+
   finalResult.crossValidation = {
-    method: "dual_model",
-    claudeEstimate: claudeLikely,
-    gptEstimate: gptLikely,
+    method: models.length === 3 ? "triple_model" : "dual_model",
+    modelsUsed: models.map((m) => m.label),
+    claudeEstimate: claudeResult.likely,
+    gptEstimate: gptResult?.likely ?? null,
+    geminiEstimate: geminiResult?.likely ?? null,
+    geminiModel: geminiResult ? (process.env.GEMINI_MODEL || "gemini-2.5-flash") : null,
     percentDifference: parseFloat(pctDiff.toFixed(1)),
     agreement,
     note,
   };
-  
+
   return finalResult;
 }
 
-// Main export — runs both models in parallel
+// Main export — runs all configured models in parallel
 export async function estimateVolume(params) {
   const { apiKey } = params;
   const openaiApiKey = process.env.OPENAI_API_KEY;
-  
-  // Run both API calls in parallel
-  const [claudeText, gptText] = await Promise.all([
+  const googleApiKey = process.env.GOOGLE_API_KEY;
+  const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+  // Run all API calls in parallel
+  const [claudeText, gptText, geminiText] = await Promise.all([
     callClaude(params),
     openaiApiKey ? callOpenAI({ ...params, openaiApiKey }) : Promise.resolve(null),
+    googleApiKey ? callGemini({ ...params, googleApiKey, geminiModel }) : Promise.resolve(null),
   ]);
-  
+
   const claudeResult = parseResponse(claudeText);
   const gptResult = parseResponse(gptText);
-  
+  const geminiResult = parseResponse(geminiText);
+
   // If Claude failed, return error
   if (!claudeResult) {
     return {
@@ -602,9 +689,9 @@ export async function estimateVolume(params) {
       crossValidation: { method: "failed", note: "Claude parsing failed" },
     };
   }
-  
+
   // Cross-validate and return merged result
-  return crossValidate(claudeResult, gptResult);
+  return crossValidate(claudeResult, gptResult, geminiResult);
 }
 
 // Export for single-model mode (backwards compatible)

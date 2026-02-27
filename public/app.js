@@ -355,6 +355,8 @@ function renderResult(r, vc) {
 
       ${vendorHtml}
 
+      ${renderCrossValidation(r.crossValidation)}
+
       ${items ? `<div class="detail-card"><div class="detail-label">Items Identified</div><div class="items-list">${items}</div></div>` : ""}
 
       <div class="detail-card">
@@ -368,6 +370,31 @@ function renderResult(r, vc) {
       </div>
 
       ${r.notes ? `<div class="notes-card"><div class="detail-label">Notes</div><div class="detail-text">${esc(r.notes)}</div></div>` : ""}
+    </div>`;
+}
+
+function renderCrossValidation(cv) {
+  if (!cv || cv.method === "failed") return "";
+
+  if (cv.method === "single_model") {
+    return `<div class="detail-card"><div class="detail-label">Models Used</div><div class="detail-text">Claude only${cv.note ? " — " + esc(cv.note) : ""}</div></div>`;
+  }
+
+  const agreeClass = cv.agreement === "STRONG" ? "conf-high" : cv.agreement === "MODERATE" ? "conf-medium" : "conf-low";
+  const models = cv.modelsUsed || ["Claude", cv.gptEstimate != null ? "GPT" : null].filter(Boolean);
+
+  const estimates = [];
+  if (cv.claudeEstimate != null) estimates.push(`Claude: ${cv.claudeEstimate} CY`);
+  if (cv.gptEstimate != null) estimates.push(`GPT-4o: ${cv.gptEstimate} CY`);
+  if (cv.geminiEstimate != null) estimates.push(`Gemini${cv.geminiModel ? " (" + cv.geminiModel + ")" : ""}: ${cv.geminiEstimate} CY`);
+
+  return `
+    <div class="detail-card">
+      <div class="detail-label">Cross-Validation <span class="confidence-badge ${agreeClass}" style="font-size:11px;margin-left:8px">${cv.agreement}</span></div>
+      <div class="detail-text">
+        <strong>${models.length}-model validation</strong> — ${esc(cv.note)}<br>
+        ${estimates.map((e) => `<span class="item-tag">${esc(e)}</span>`).join(" ")}
+      </div>
     </div>`;
 }
 
@@ -455,6 +482,7 @@ function renderHistoryDetail(e) {
   const items = (result.itemsIdentified || []).map((i) => `<span class="item-tag">${esc(i)}</span>`).join("");
 
   return `
+    ${renderCrossValidation(result.crossValidation)}
     ${items ? `<div class="detail-card"><div class="detail-label">Items Identified</div><div class="items-list">${items}</div></div>` : ""}
     ${result.scaleReference ? `<div class="detail-card"><div class="detail-label">Scale Reference</div><div class="detail-text">${esc(result.scaleReference)}</div></div>` : ""}
     ${result.reasoning ? `<div class="detail-card"><div class="detail-label">Reasoning</div><div class="detail-text">${esc(result.reasoning)}</div></div>` : ""}
