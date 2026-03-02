@@ -1,18 +1,16 @@
 {
-  "name": "trucksight",
-  "version": "2.0.0",
+  "name": "pennys-rainbow-fairy-closet",
+  "version": "1.0.0",
   "type": "module",
-  "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "express": "^4.21.0",
-    "express-session": "^1.18.0",
-    "multer": "^1.4.5-lts.1",
-    "pg": "^8.13.0",
-    "dotenv": "^16.4.5",
-    "openai": "^4.77.0"
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
   }
 }
