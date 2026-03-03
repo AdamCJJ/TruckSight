@@ -706,6 +706,57 @@ function crossValidate(claudeResult, gptResult, geminiResult) {
   return finalResult;
 }
 
+// Self-review: ask Claude to verify math and scale references
+const REVIEW_PROMPT = `You are reviewing a volume estimate you previously made. Double-check:
+1. ALL scale reference assumptions — are the known dimensions correct?
+2. ALL math — do the item volumes add up to the stated total?
+3. Stackability categories — are bulky items using 4ft effective height correctly?
+4. Mattresses should NOT use 4ft height. Check this.
+5. Are you being slightly conservative (for hospital contract pricing)?
+6. Does the confidence level match what was described?
+
+If you find errors, CORRECT THEM. If the estimate looks good, return it unchanged.
+Return ONLY the corrected JSON in the exact same format. No explanation outside JSON.`;
+
+async function selfReview(params, initialResult) {
+  const { apiKey } = params;
+
+  const reviewText = `${REVIEW_PROMPT}\n\nPrevious estimate to review:\n${JSON.stringify(initialResult, null, 2)}`;
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2048,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: reviewText }],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Self-review API error:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    const text = data.content
+      ?.filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n") ?? "";
+
+    return parseResponse(text);
+  } catch (err) {
+    console.error("Self-review error:", err.message);
+    return null;
+  }
+}
+
 // Main export — runs all configured models in parallel
 // Gemini uses tiered approach: Flash first, escalates to Pro if uncertain
 export async function estimateVolume(params) {
@@ -752,27 +803,70 @@ export async function estimateVolume(params) {
     }
   }
 
+  // Step 2: Self-review — verify math and scale references
+  console.log("Step 2: Running self-review...");
+  const reviewed = await selfReview(params, result);
+
+  if (reviewed) {
+    // Merge review corrections into result
+    const changed = reviewed.likely !== result.likely || reviewed.low !== result.low || reviewed.high !== result.high;
+    result.selfReview = {
+      ran: true,
+      corrected: changed,
+      originalLikely: changed ? result.likely : null,
+      reviewedLikely: changed ? reviewed.likely : null,
+    };
+
+    if (changed) {
+      console.log(`Self-review corrected: ${result.likely} CY → ${reviewed.likely} CY`);
+      result.low = reviewed.low;
+      result.high = reviewed.high;
+      result.likely = reviewed.likely;
+      result.confidence = reviewed.confidence;
+      result.truckFraction = reviewed.truckFraction;
+      result.reasoning = `SELF-REVIEWED ESTIMATE (Step 2 verified)\n\nOriginal estimate: ${result.selfReview.originalLikely} CY → Corrected to: ${reviewed.likely} CY\n\nCorrected reasoning:\n${reviewed.reasoning}\n\n--- ORIGINAL CROSS-VALIDATED REASONING ---\n${result.reasoning}`;
+      result.notes = reviewed.notes || result.notes;
+    } else {
+      console.log("Self-review confirmed estimate — no changes.");
+      result.reasoning = `SELF-REVIEWED ESTIMATE (Step 2 confirmed — no corrections needed)\n\n${result.reasoning}`;
+    }
+  } else {
+    result.selfReview = { ran: false, corrected: false };
+  }
+
   return result;
 }
 
-// Export for single-model mode (backwards compatible)
-export async function estimateVolumeSingleModel(params) {
-  const claudeText = await callClaude(params);
-  const claudeResult = parseResponse(claudeText);
-  
-  if (!claudeResult) {
-    return {
-      low: 0,
-      high: 0,
-      likely: 0,
-      confidence: "Low",
-      truckFraction: "unknown",
-      reasoning: claudeText || "No response",
-      itemsIdentified: [],
-      scaleReference: "Could not parse response",
-      notes: "The AI response could not be parsed.",
-    };
+// On-demand refinement of an existing estimate (text-only, no photos needed)
+export async function refineEstimate(apiKey, previousResult) {
+  const reviewed = await selfReview({ apiKey }, previousResult);
+
+  if (!reviewed) {
+    return { ...previousResult, refinement: { success: false, note: "Refinement failed" } };
   }
-  
-  return claudeResult;
+
+  const changed = reviewed.likely !== previousResult.likely || reviewed.low !== previousResult.low || reviewed.high !== previousResult.high;
+
+  const refined = {
+    ...previousResult,
+    low: reviewed.low,
+    high: reviewed.high,
+    likely: reviewed.likely,
+    confidence: reviewed.confidence,
+    truckFraction: reviewed.truckFraction,
+    itemsIdentified: reviewed.itemsIdentified,
+    scaleReference: reviewed.scaleReference,
+    notes: reviewed.notes,
+    reasoning: changed
+      ? `REFINED ESTIMATE\n\nPrevious: ${previousResult.likely} CY → Refined to: ${reviewed.likely} CY\n\n${reviewed.reasoning}`
+      : `REFINED ESTIMATE (confirmed — no corrections)\n\n${reviewed.reasoning}`,
+    refinement: {
+      success: true,
+      corrected: changed,
+      previousLikely: previousResult.likely,
+      refinedLikely: reviewed.likely,
+    },
+  };
+
+  return refined;
 }

@@ -5,7 +5,7 @@ import multer from "multer";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { initDb, insertEstimate, listEstimates, getEstimate, updateEstimate } from "./db.js";
-import { estimateVolume } from "./claude.js";
+import { estimateVolume, refineEstimate } from "./claude.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -160,6 +160,42 @@ app.post(
     }
   }
 );
+
+// ─── Refine route ───
+
+app.post("/api/estimate/:id/refine", requireAuth, async (req, res) => {
+  try {
+    const row = await getEstimate(req.params.id);
+    if (!row) return res.status(404).json({ error: "Estimate not found" });
+
+    let previousResult;
+    try {
+      previousResult = JSON.parse(row.result_json);
+    } catch {
+      return res.status(400).json({ error: "Could not parse previous result" });
+    }
+
+    const refined = await refineEstimate(ANTHROPIC_API_KEY, previousResult);
+
+    // Update DB with refined result
+    try {
+      await updateEstimate(req.params.id, {
+        result_json: JSON.stringify(refined),
+        confidence: refined.confidence,
+        low_cy: refined.low,
+        likely_cy: refined.likely,
+        high_cy: refined.high,
+      });
+    } catch (dbErr) {
+      console.error("DB update error (non-fatal):", dbErr.message);
+    }
+
+    return res.json({ result: refined });
+  } catch (err) {
+    console.error("Refine error:", err);
+    return res.status(500).json({ error: err.message || "Refinement failed" });
+  }
+});
 
 // ─── History routes ───
 

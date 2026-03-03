@@ -30,6 +30,7 @@ const historyList = document.getElementById("historyList");
 
 let editors = []; // { file, img, canvas, ctx, mode, drawing, lastX, lastY }
 let expandedHistoryId = null;
+let lastEstimateId = null; // Track current estimate for refine
 
 // ─── API helper ───
 async function api(path, opts) {
@@ -106,22 +107,70 @@ document.querySelectorAll("input[name='jobType']").forEach((el) => {
   });
 });
 
-// ─── Photo Markup ───
+// ─── Photo Upload & Preview ───
 photoInput.addEventListener("change", () => {
+  rebuildPhotoPreviews();
+});
+
+function rebuildPhotoPreviews() {
   markupArea.innerHTML = "";
   editors = [];
   const files = photoInput.files ? Array.from(photoInput.files) : [];
+
   if (files.length > 0) {
+    // Photo grid preview with remove buttons
+    const grid = document.createElement("div");
+    grid.className = "photo-grid";
+    files.forEach((f, i) => {
+      const thumb = document.createElement("div");
+      thumb.className = "photo-thumb";
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(f);
+      img.alt = f.name;
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "photo-remove";
+      removeBtn.textContent = "\u2715";
+      removeBtn.onclick = () => removePhoto(i);
+      thumb.append(img, removeBtn);
+      grid.appendChild(thumb);
+    });
+    markupArea.appendChild(grid);
+
     const tip = document.createElement("div");
     tip.className = "markup-tip";
-    tip.innerHTML = `<b>Tip:</b> Use <b style="color:#16a34a">green</b> to mark items to remove. Use <b style="color:#dc2626">red</b> to mark items that stay. Marking is optional.`;
+    tip.innerHTML = `<b>${files.length} photo${files.length > 1 ? "s" : ""} selected.</b> Expand below to draw markup (optional). Use <b style="color:#16a34a">green</b> = include, <b style="color:#dc2626">red</b> = exclude.`;
     markupArea.appendChild(tip);
-  }
-  files.forEach((f, i) => editors.push(makeEditor(f, i)));
-  estimateBtn.disabled = files.length === 0;
-});
 
-function makeEditor(file, index) {
+    // Collapsible markup section
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "markup-toggle";
+    toggle.textContent = "Show Markup Editor";
+    const editorWrap = document.createElement("div");
+    editorWrap.className = "markup-editors hidden";
+    toggle.onclick = () => {
+      const open = !editorWrap.classList.contains("hidden");
+      editorWrap.classList.toggle("hidden", open);
+      toggle.textContent = open ? "Show Markup Editor" : "Hide Markup Editor";
+    };
+    markupArea.appendChild(toggle);
+    markupArea.appendChild(editorWrap);
+
+    files.forEach((f, i) => editors.push(makeEditor(f, i, editorWrap)));
+  }
+  estimateBtn.disabled = files.length === 0;
+}
+
+function removePhoto(index) {
+  const dt = new DataTransfer();
+  const files = Array.from(photoInput.files);
+  files.forEach((f, i) => { if (i !== index) dt.items.add(f); });
+  photoInput.files = dt.files;
+  rebuildPhotoPreviews();
+}
+
+function makeEditor(file, index, parentEl) {
   const card = document.createElement("div");
   card.className = "markup-card";
 
@@ -170,7 +219,7 @@ function makeEditor(file, index) {
   hint.textContent = "Draw on photo to mark items. Optional.";
 
   card.append(top, wrap, hint);
-  markupArea.appendChild(card);
+  (parentEl || markupArea).appendChild(card);
 
   const editor = { file, img, canvas, ctx, mode: "include", drawing: false, lastX: 0, lastY: 0, hasMarks: false };
 
@@ -257,10 +306,18 @@ estimateBtn.onclick = async () => {
   if (!files.length) return;
 
   estimateBtn.disabled = true;
-  estimateBtn.innerHTML = `<span class="spinner"></span> Analyzing photos...`;
   resultPlaceholder.classList.add("hidden");
   resultArea.classList.remove("hidden");
-  resultArea.innerHTML = `<div class="placeholder-box"><span class="spinner"></span><p style="margin-top:12px"><strong>Analyzing ${files.length} photo${files.length > 1 ? "s" : ""}...</strong></p><p class="muted">This usually takes 10-30 seconds</p></div>`;
+
+  // Step 1 progress
+  estimateBtn.innerHTML = `<span class="spinner"></span> Step 1: Analyzing photos...`;
+  resultArea.innerHTML = `<div class="placeholder-box">
+    <div class="step-progress">
+      <div class="step-item active"><span class="spinner"></span> Step 1: AI analyzing ${files.length} photo${files.length > 1 ? "s" : ""}...</div>
+      <div class="step-item pending">Step 2: Verifying scale & math...</div>
+    </div>
+    <p class="muted" style="margin-top:12px">This usually takes 15-40 seconds</p>
+  </div>`;
 
   const jt = getJobType();
   const form = new FormData();
@@ -286,7 +343,21 @@ estimateBtn.onclick = async () => {
   }
 
   try {
+    // Update progress to step 2 after a delay (the server handles both steps)
+    const stepTimer = setTimeout(() => {
+      estimateBtn.innerHTML = `<span class="spinner"></span> Step 2: Verifying...`;
+      resultArea.innerHTML = `<div class="placeholder-box">
+        <div class="step-progress">
+          <div class="step-item done">Step 1: AI analysis complete</div>
+          <div class="step-item active"><span class="spinner"></span> Step 2: Verifying scale & math...</div>
+        </div>
+        <p class="muted" style="margin-top:12px">Almost done...</p>
+      </div>`;
+    }, 12000);
+
     const data = await api("/api/estimate", { method: "POST", body: form });
+    clearTimeout(stepTimer);
+    lastEstimateId = data.id;
     renderResult(data.result, jt === "TRUCK_VERIFY" ? vendorClaim.value : null);
     resetBtn.classList.remove("hidden");
   } catch (e) {
@@ -370,8 +441,46 @@ function renderResult(r, vc) {
       </div>
 
       ${r.notes ? `<div class="notes-card"><div class="detail-label">Notes</div><div class="detail-text">${esc(r.notes)}</div></div>` : ""}
+
+      ${renderSelfReview(r.selfReview)}
+
+      ${lastEstimateId ? `<button class="btn-outline full refine-btn" onclick="refineEstimate(${lastEstimateId})">Refine Estimate Again</button>` : ""}
     </div>`;
 }
+
+function renderSelfReview(sr) {
+  if (!sr || !sr.ran) return "";
+  if (sr.corrected) {
+    return `<div class="detail-card" style="border-color:#c4b5fd;background:#f5f3ff">
+      <div class="detail-label" style="color:#7c3aed">Self-Review (Step 2)</div>
+      <div class="detail-text">Estimate was <strong>corrected</strong> during verification: ${sr.originalLikely} CY → ${sr.reviewedLikely} CY</div>
+    </div>`;
+  }
+  return `<div class="detail-card" style="border-color:#86efac;background:#f0fdf4">
+    <div class="detail-label" style="color:#16a34a">Self-Review (Step 2)</div>
+    <div class="detail-text">Math and scale references verified — estimate confirmed.</div>
+  </div>`;
+}
+
+window.refineEstimate = async function (id) {
+  const btn = document.querySelector(".refine-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> Refining...`;
+  }
+
+  try {
+    const data = await api(`/api/estimate/${id}/refine`, { method: "POST" });
+    lastEstimateId = id;
+    renderResult(data.result, null);
+  } catch (e) {
+    alert(`Refine error: ${e.message}`);
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Refine Estimate Again";
+    }
+  }
+};
 
 function renderCrossValidation(cv) {
   if (!cv || cv.method === "failed") return "";

@@ -526,6 +526,94 @@ input[type="file"]::file-selector-button:hover {
   font-weight: 700;
 }
 
+/* ─── Photo Grid ─── */
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.photo-thumb {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  aspect-ratio: 4/3;
+}
+
+.photo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(220, 38, 38, 0.9);
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.photo-thumb:hover .photo-remove { opacity: 1; }
+
+.markup-toggle {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: white;
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: center;
+}
+
+.markup-toggle:hover { background: #fafaf9; color: var(--text); }
+
+.markup-editors { margin-top: 8px; }
+
+/* ─── Step Progress ─── */
+
+.step-progress { text-align: left; width: 100%; max-width: 340px; }
+
+.step-item {
+  padding: 8px 0;
+  font-size: 0.875rem;
+  color: var(--hint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.step-item.active { color: var(--text); font-weight: 600; }
+.step-item.done { color: var(--green); }
+.step-item.done::before { content: "\2713"; font-weight: 700; }
+.step-item.pending::before { content: "\25CB"; font-size: 0.7rem; }
+
+/* ─── Refine Button ─── */
+
+.refine-btn {
+  margin-top: 12px;
+}
+
 /* ─── Spinner ─── */
 
 .spinner {
