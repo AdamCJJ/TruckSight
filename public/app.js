@@ -386,7 +386,18 @@ function renderCrossValidation(cv) {
   const estimates = [];
   if (cv.claudeEstimate != null) estimates.push(`Claude: ${cv.claudeEstimate} CY`);
   if (cv.gptEstimate != null) estimates.push(`GPT-4o: ${cv.gptEstimate} CY`);
-  if (cv.geminiEstimate != null) estimates.push(`Gemini${cv.geminiModel ? " (" + cv.geminiModel + ")" : ""}: ${cv.geminiEstimate} CY`);
+  if (cv.geminiEstimate != null) {
+    let geminiLabel = "Gemini";
+    if (cv.geminiModel) geminiLabel += ` (${cv.geminiModel.replace("gemini-", "")})`;
+    estimates.push(`${geminiLabel}: ${cv.geminiEstimate} CY`);
+  }
+
+  let escalationHtml = "";
+  if (cv.geminiEscalated && cv.geminiModel === "gemini-2.5-pro") {
+    escalationHtml = `<div style="margin-top:6px;font-size:12px;color:#7c3aed">⬆ Flash was uncertain${cv.geminiEscalationReason ? " (" + esc(cv.geminiEscalationReason) + ")" : ""} — auto-escalated to Pro</div>`;
+  } else if (cv.geminiModel === "gemini-2.5-flash") {
+    escalationHtml = `<div style="margin-top:6px;font-size:12px;color:#059669">⚡ Flash was confident — Pro not needed</div>`;
+  }
 
   return `
     <div class="detail-card">
@@ -394,6 +405,7 @@ function renderCrossValidation(cv) {
       <div class="detail-text">
         <strong>${models.length}-model validation</strong> — ${esc(cv.note)}<br>
         ${estimates.map((e) => `<span class="item-tag">${esc(e)}</span>`).join(" ")}
+        ${escalationHtml}
       </div>
     </div>`;
 }

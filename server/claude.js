@@ -397,15 +397,9 @@ async function callClaude(params) {
   return text;
 }
 
-// Call Gemini API (supports 2.5 Flash and 2.5 Pro)
-async function callGemini(params) {
-  const { googleApiKey, photos, geminiModel } = params;
-
-  if (!googleApiKey) {
-    return null; // Gemini not configured, skip
-  }
-
-  const model = geminiModel || "gemini-2.5-flash";
+// Call a single Gemini model
+async function callGeminiModel(params, model) {
+  const { googleApiKey, photos } = params;
   const userText = buildUserContent(params);
 
   const parts = [{ text: userText }];
@@ -429,35 +423,90 @@ async function callGemini(params) {
     }
   }
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${googleApiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{ role: "user", parts }],
-          generationConfig: { maxOutputTokens: 2048 },
-        }),
-      }
-    );
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${googleApiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [{ role: "user", parts }],
+        generationConfig: { maxOutputTokens: 2048 },
+      }),
+    }
+  );
 
-    if (!response.ok) {
-      const errBody = await response.text();
-      throw new Error(`Gemini API error ${response.status}: ${errBody}`);
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Gemini API error ${response.status}: ${errBody}`);
+  }
+
+  const data = await response.json();
+  return data.candidates?.[0]?.content?.parts
+    ?.filter((p) => p.text)
+    .map((p) => p.text)
+    .join("\n") ?? "";
+}
+
+// Determine if a Gemini Flash result is uncertain and needs Pro escalation
+function isFlashUncertain(result) {
+  if (!result) return true;
+  // Low confidence = uncertain
+  if (result.confidence === "Low") return true;
+  // Wide range relative to the estimate (high/low spread > 50% of likely)
+  if (result.likely > 0) {
+    const spread = result.high - result.low;
+    if (spread / result.likely > 0.5) return true;
+  }
+  // No scale reference found
+  if (!result.scaleReference || result.scaleReference === "none identified") return true;
+  return false;
+}
+
+// Tiered Gemini: start with Flash, escalate to Pro if uncertain
+async function callGeminiTiered(params) {
+  const { googleApiKey } = params;
+
+  if (!googleApiKey) {
+    return { text: null, model: null, escalated: false };
+  }
+
+  try {
+    // Step 1: Run Flash
+    console.log("Gemini: Starting with 2.5 Flash...");
+    const flashText = await callGeminiModel(params, "gemini-2.5-flash");
+    const flashResult = parseResponse(flashText);
+
+    // Step 2: Check if Flash is confident
+    if (!isFlashUncertain(flashResult)) {
+      console.log(`Gemini: Flash is confident (${flashResult.confidence}). Using Flash result.`);
+      return { text: flashText, model: "gemini-2.5-flash", escalated: false };
     }
 
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts
-      ?.filter((p) => p.text)
-      .map((p) => p.text)
-      .join("\n") ?? "";
+    // Step 3: Flash is uncertain — escalate to Pro
+    const reason = !flashResult ? "parsing failed" :
+      flashResult.confidence === "Low" ? "low confidence" :
+      (!flashResult.scaleReference || flashResult.scaleReference === "none identified") ? "no scale reference" :
+      "wide estimate range";
+    console.log(`Gemini: Flash uncertain (${reason}). Escalating to 2.5 Pro...`);
 
-    return text;
+    const proText = await callGeminiModel(params, "gemini-2.5-pro");
+    const proResult = parseResponse(proText);
+
+    if (proResult) {
+      return { text: proText, model: "gemini-2.5-pro", escalated: true, escalationReason: reason };
+    }
+
+    // Pro failed — fall back to Flash result if it existed
+    if (flashResult) {
+      console.log("Gemini: Pro failed, falling back to Flash result.");
+      return { text: flashText, model: "gemini-2.5-flash", escalated: true, escalationReason: `${reason} (Pro failed, using Flash)` };
+    }
+
+    return { text: null, model: null, escalated: true };
   } catch (err) {
     console.error("Gemini API error:", err.message);
-    return null;
+    return { text: null, model: null, escalated: false };
   }
 }
 
@@ -647,7 +696,8 @@ function crossValidate(claudeResult, gptResult, geminiResult) {
     claudeEstimate: claudeResult.likely,
     gptEstimate: gptResult?.likely ?? null,
     geminiEstimate: geminiResult?.likely ?? null,
-    geminiModel: geminiResult ? (process.env.GEMINI_MODEL || "gemini-2.5-flash") : null,
+    geminiModel: null,
+    geminiEscalated: false,
     percentDifference: parseFloat(pctDiff.toFixed(1)),
     agreement,
     note,
@@ -657,22 +707,22 @@ function crossValidate(claudeResult, gptResult, geminiResult) {
 }
 
 // Main export — runs all configured models in parallel
+// Gemini uses tiered approach: Flash first, escalates to Pro if uncertain
 export async function estimateVolume(params) {
   const { apiKey } = params;
   const openaiApiKey = process.env.OPENAI_API_KEY;
   const googleApiKey = process.env.GOOGLE_API_KEY;
-  const geminiModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
-  // Run all API calls in parallel
-  const [claudeText, gptText, geminiText] = await Promise.all([
+  // Run Claude + GPT in parallel with Gemini tiered (Flash, then maybe Pro)
+  const [claudeText, gptText, geminiTiered] = await Promise.all([
     callClaude(params),
     openaiApiKey ? callOpenAI({ ...params, openaiApiKey }) : Promise.resolve(null),
-    googleApiKey ? callGemini({ ...params, googleApiKey, geminiModel }) : Promise.resolve(null),
+    callGeminiTiered({ ...params, googleApiKey }),
   ]);
 
   const claudeResult = parseResponse(claudeText);
   const gptResult = parseResponse(gptText);
-  const geminiResult = parseResponse(geminiText);
+  const geminiResult = parseResponse(geminiTiered.text);
 
   // If Claude failed, return error
   if (!claudeResult) {
@@ -691,7 +741,18 @@ export async function estimateVolume(params) {
   }
 
   // Cross-validate and return merged result
-  return crossValidate(claudeResult, gptResult, geminiResult);
+  const result = crossValidate(claudeResult, gptResult, geminiResult);
+
+  // Attach Gemini tiered metadata
+  if (result.crossValidation && geminiTiered.model) {
+    result.crossValidation.geminiModel = geminiTiered.model;
+    result.crossValidation.geminiEscalated = geminiTiered.escalated;
+    if (geminiTiered.escalationReason) {
+      result.crossValidation.geminiEscalationReason = geminiTiered.escalationReason;
+    }
+  }
+
+  return result;
 }
 
 // Export for single-model mode (backwards compatible)
