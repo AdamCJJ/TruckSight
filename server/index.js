@@ -5,7 +5,7 @@ import multer from "multer";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { initDb, insertEstimate, listEstimates, getEstimate, updateEstimate } from "./db.js";
-import { verifyVendorLoad } from "./geminiVerify.js";
+import { estimateVolume } from "./claude.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -13,13 +13,9 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 10000;
 const PIN = process.env.APP_PIN || "1234";
+
 if (!process.env.GEMINI_API_KEY) {
   console.error("GEMINI_API_KEY environment variable is required");
-  process.exit(1);
-}
-
-if (!ANTHROPIC_API_KEY) {
-  console.error("ANTHROPIC_API_KEY environment variable is required");
   process.exit(1);
 }
 
@@ -34,33 +30,27 @@ app.use(
     cookie: {
       secure: process.env.NODE_ENV === "production" && process.env.RENDER === "true",
       httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+      maxAge: 1000 * 60 * 60 * 24 * 7,
       sameSite: "lax",
     },
   })
 );
 
-// Trust proxy on Render
 if (process.env.RENDER) {
   app.set("trust proxy", 1);
 }
 
-// Static files
 app.use(express.static(join(__dirname, "..", "public")));
 
-// File upload
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024, files: 24 }, // 20MB per file, 24 files (12 photos + 12 overlays)
+  limits: { fileSize: 20 * 1024 * 1024, files: 24 },
 });
 
-// Auth middleware
 function requireAuth(req, res, next) {
   if (req.session && req.session.authed) return next();
   return res.status(401).json({ error: "Not authenticated" });
 }
-
-// ─── Auth routes ───
 
 app.post("/api/login", (req, res) => {
   const { pin } = req.body;
@@ -79,8 +69,6 @@ app.get("/api/ping", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── Estimate route ───
-
 app.post(
   "/api/estimate",
   requireAuth,
@@ -98,16 +86,15 @@ app.post(
       }
 
       const {
-  job_type = "VENDOR_VERIFY",
-  dumpster_size,
-  truck_size,
-  vendor_claim,
-  reference_object,
-  notes,
-  agent_label,
-} = req.body;
+        job_type = "STANDARD",
+        dumpster_size,
+        truck_size,
+        vendor_claim,
+        reference_object,
+        notes,
+        agent_label,
+      } = req.body;
 
-      // Build photo data for Claude
       const photoData = photos.map((photo, i) => {
         const base64 = photo.buffer.toString("base64");
         const mediaType = photo.mimetype || "image/jpeg";
@@ -119,38 +106,33 @@ app.post(
         };
       });
 
-      const claimedCy = vendor_claim ? parseFloat(vendor_claim) : 0;
-const truckCapacityCy = truck_size ? parseInt(truck_size, 10) : 15;
+      const result = await estimateVolume({
+        photos: photoData,
+        jobType: job_type,
+        dumpsterSize: dumpster_size,
+        truckSize: truck_size ? parseInt(truck_size, 10) : 15,
+        vendorClaim: vendor_claim,
+        notes,
+        referenceObject: reference_object,
+      });
 
-const result = await verifyVendorLoad({
-  images: photoData.map((p) => ({
-    base64: p.base64,
-    mimeType: p.mediaType,
-  })),
-  claimedCy,
-  truckCapacityCy,
-});
-
-      // Save to DB
       let dbRecord = null;
       try {
         dbRecord = await insertEstimate({
           user_id: null,
           agent_label: agent_label || null,
           job_type,
-          dumpster_size: dumpster_size && dumpster_size !== "UNKNOWN" ? parseInt(dumpster_size) : null,
-          truck_size: truck_size ? parseInt(truck_size) : 15,
+          dumpster_size: dumpster_size && dumpster_size !== "UNKNOWN" ? parseInt(dumpster_size, 10) : null,
+          truck_size: truck_size ? parseInt(truck_size, 10) : 15,
           vendor_claim: vendor_claim || null,
           notes: notes || null,
           photo_count: photos.length,
           reference_object: reference_object || null,
           result_json: JSON.stringify(result),
           confidence: result.confidence,
-low_cy: result.estimated_delta_cy_low,
-likely_cy: (
-  (result.estimated_delta_cy_low + result.estimated_delta_cy_high) / 2
-).toFixed(1),
-high_cy: result.estimated_delta_cy_high,
+          low_cy: result.low,
+          likely_cy: result.likely,
+          high_cy: result.high,
         });
       } catch (dbErr) {
         console.error("DB insert error (non-fatal):", dbErr.message);
@@ -167,11 +149,9 @@ high_cy: result.estimated_delta_cy_high,
   }
 );
 
-// ─── History routes ───
-
 app.get("/api/history", requireAuth, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = parseInt(req.query.limit, 10) || 100;
     const rows = await listEstimates(limit);
     return res.json({ estimates: rows });
   } catch (err) {
@@ -203,8 +183,6 @@ app.post("/api/history/:id/actual", requireAuth, async (req, res) => {
   }
 });
 
-// ─── Stats route ───
-
 app.get("/api/stats", requireAuth, async (req, res) => {
   try {
     const { getStats } = await import("./db.js");
@@ -215,13 +193,9 @@ app.get("/api/stats", requireAuth, async (req, res) => {
   }
 });
 
-// ─── SPA fallback ───
-
 app.get("*", (req, res) => {
   res.sendFile(join(__dirname, "..", "public", "index.html"));
 });
-
-// ─── Start ───
 
 async function start() {
   await initDb();
