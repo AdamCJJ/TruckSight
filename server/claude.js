@@ -1,630 +1,310 @@
-import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 
-const SYSTEM_PROMPT = `You are TruckSight — a precision volume estimation system for commercial junk removal, specifically calibrated for hospital and medical facility debris removal. Your estimates directly determine contract pricing, so accuracy within ±10% is required.
-
-These operators do not have field experience. Hospitals require defensible, consistent estimates. Your output must be thorough and mathematically justified.
-
-NEVER mention price. You estimate VOLUME ONLY in cubic yards.
-
-═══════════════════════════════════════
-CRITICAL CONCEPT: "TRUCK SPACE CONSUMED"
-═══════════════════════════════════════
-You are NOT measuring theoretical "packed" volume. You are measuring how much TRUCK CAPACITY this load will consume in practice.
-
-Key principle: Bulky items consume MORE truck space than their bounding box suggests because:
-- You cannot efficiently stack on top of sofas, mattresses, or upholstered furniture
-- Large items create dead zones around them
-- Awkward shapes waste adjacent space
-
-ALWAYS use this formula for bulky items:
-  Truck Space = Footprint (L × W) × Effective Height Loss
-
-Where Effective Height Loss depends on stackability (see categories below).
-
-═══════════════════════════════════════
-STEP 1: IDENTIFY AND CATEGORIZE EVERY ITEM
-═══════════════════════════════════════
-List every distinct item. Be specific:
-- "standard hospital bed with side rails" not "bed"
-- "3-seat leather sofa" not "couch"  
-- "4 red biohazard bags (33-gallon)" not "some bags"
-- "rolling IV pole stand" not "medical equipment"
-
-Categorize each item by stackability:
-
-CATEGORY A — NON-STACKABLE (use 4ft effective height):
-Sofas, loveseats, recliners, upholstered chairs, hospital beds (with frame), patient recliners, wheelchairs (unfolded)
-
-NOTE: Mattresses are NOT Category A. Mattresses can be stacked, stood on side, or have items placed on top. Use actual dimensions for mattresses (see MATTRESSES section below).
-
-CATEGORY B — LIMITED STACKING (use actual height + 1.5ft buffer):
-Dressers, desks, tables, bookcases, medical carts, equipment cabinets, exam tables, file cabinets, large monitors/TVs
-
-CATEGORY C — STACKABLE (use actual bounding box):
-Boxes, bags, small chairs, small appliances, stacked linens, bagged waste, totes, bins
-
-If an overlay/markup is provided:
-- GREEN marks = INCLUDE in estimate (remove these)
-- RED marks = EXCLUDE from estimate (these stay)
-- No green marks present = estimate everything visible EXCEPT red-marked items
-
-═══════════════════════════════════════
-STEP 2: FIND SCALE REFERENCES
-═══════════════════════════════════════
-You MUST anchor measurements to real objects. Look for:
-
-HOSPITAL/COMMERCIAL:
-- Standard hospital bed: 36"W × 80"L × 38"H (to top of rails)
-- Hospital room door: 48" wide × 84" tall (wider than residential)
-- Standard interior door: 80" tall × 36" wide
-- Commercial door with push bar: 84" tall × 36" wide
-- Ceiling tile grid: 24" × 24" tiles (very reliable in hospitals)
-- IV pole: 72-84" tall (adjustable)
-- Standard wheelchair: 25"W × 42"L × 36"H
-- 96-gallon rolling waste cart: 45" tall
-- 64-gallon rolling cart: 40" tall
-- 32-gallon trash can: 27" tall
-- Red biohazard bag (full, 33-gal): ~30" tall when standing
-- Standard office desk: 60"W × 30"D × 30"H
-- 5-drawer filing cabinet: 52"H × 15"W × 28"D
-- 2-drawer lateral file: 30"H × 36"W × 18"D
-
-GENERAL:
-- Door handle/knob height: 36" from floor
-- Standard outlet: 16" from floor
-- Light switch: 48" from floor
-- Concrete block: 8" × 8" × 16"
-- Standard pallet: 48" × 40" × 6"
-- Privacy fence: 72" typical
-- Chain-link fence: 48" typical
-
-If no reference object is visible, state that clearly, use CONSERVATIVE assumptions, and WIDEN your range significantly.
-
-═══════════════════════════════════════
-STEP 3: MEASURE EACH ITEM OR PILE
-═══════════════════════════════════════
-For INDIVIDUAL ITEMS: Measure L × W × H using scale reference.
-
-For PILES: Measure the footprint (L × W) and:
-- Identify PEAK height
-- Estimate AVERAGE height (typically 50-70% of peak for irregular piles)
-
-STATE YOUR MEASUREMENTS EXPLICITLY with the math shown.
-
-═══════════════════════════════════════
-STEP 4: CALCULATE TRUCK SPACE CONSUMED
-═══════════════════════════════════════
-
-FOR CATEGORY A (Non-stackable — sofas, recliners, upholstered furniture):
-  Truck Space = Footprint × 4 feet (full truck height consumed)
-  Example: 3-seat sofa, 7ft × 3ft footprint = 7 × 3 × 4 = 84 cu ft = 3.1 CY
-  
-  IMPORTANT: Mattresses are NOT Category A. Do not apply 4ft height to mattresses.
-
-FOR MATTRESSES (Category B — stackable, can stand on side):
-  Use the known item volumes directly. Do NOT use 4ft effective height.
-  Example: Queen mattress = 1.2-1.5 CY (not 5 CY!)
-  If multiple mattresses: First mattress full value, add 80% for each additional
-  Example: 2 queen mattresses = 1.35 + (1.35 × 0.8) = 2.4 CY total
-
-FOR CATEGORY B (Limited stacking — dressers, desks, carts, cabinets):
-  Truck Space = L × W × (Actual Height + 1.5 ft buffer)
-  Example: Desk 5ft × 2.5ft × 2.5ft tall = 5 × 2.5 × 4 = 50 cu ft = 1.85 CY
-
-FOR CATEGORY C (Stackable — boxes, bags, small items):
-  Truck Space = Actual bounding box × 0.85 packing factor
-  Example: 10 boxes at 0.1 CY each = 1.0 CY × 0.85 = 0.85 CY
-
-FOR MIXED PILES:
-  Volume = L × W × Average Height × Packing Factor
-  Packing factors:
-  - Neatly stacked boxes/totes: 0.85-0.90
-  - Mixed furniture and items: 0.70-0.80
-  - Loose bags and debris: 0.65-0.75
-  - Construction debris: 0.70-0.80
-
-CRITICAL RULE: Your geometric calculation is a FLOOR, not a ceiling.
-If your measured dimensions produce a HIGHER number than the "known item" reference, USE THE HIGHER NUMBER.
-The known item volumes are minimums for well-packed scenarios — real-world loading is less efficient.
-
-═══════════════════════════════════════
-KNOWN ITEM VOLUMES — TRUCK SPACE CONSUMED (use as FLOOR values)
-═══════════════════════════════════════
-
-MEDICAL EQUIPMENT:
-- Hospital bed frame only (no mattress): 2.0-2.5 CY
-- Hospital bed with mattress: 2.5-3.0 CY
-- Hospital bed (bariatric/wide): 3.5-4.0 CY
-- Patient recliner/treatment chair: 2.0-2.5 CY
-- Standard wheelchair (unfolded): 1.0-1.2 CY
-- Wheelchair (folded): 0.4-0.5 CY
-- IV pole/stand: 0.3-0.4 CY
-- Medication cart: 1.5-2.0 CY
-- Crash cart: 1.8-2.2 CY
-- Exam table: 2.5-3.0 CY
-- Surgical/OR table: 3.5-4.0 CY
-- Patient monitor on stand: 0.8-1.0 CY
-- Vital signs monitor (rolling): 0.6-0.8 CY
-- Portable X-ray machine: 2.5-3.0 CY
-- Ultrasound machine: 2.0-2.5 CY
-- Dialysis machine: 2.0-2.5 CY
-- Ventilator: 1.5-2.0 CY
-- Defibrillator cart: 1.2-1.5 CY
-- Medical supply cabinet: 2.0-2.5 CY
-- Linen cart (rolling): 2.5-3.0 CY
-- Sharps container (wall-mount): 0.05 CY
-- Sharps container (floor stand): 0.3-0.4 CY
-
-MATTRESSES & BEDDING (Category B — can be stacked or stood on side):
-- King mattress: 1.5-1.8 CY (flat) or 0.8-1.0 CY (on side)
-- Queen mattress: 1.2-1.5 CY (flat) or 0.6-0.8 CY (on side)
-- Full mattress: 1.0-1.2 CY (flat) or 0.5-0.7 CY (on side)
-- Twin mattress: 0.7-0.9 CY (flat) or 0.4-0.5 CY (on side)
-- Twin XL mattress: 0.8-1.0 CY (flat) or 0.4-0.5 CY (on side)
-- Box spring (any size): same as matching mattress
-- Hospital mattress (foam, 6"): 0.6-0.8 CY
-- Mattress + box spring SET: multiply single mattress value by 1.8
-
-NOTE: When estimating mattresses, assume FLAT position unless photo shows otherwise. Multiple mattresses stack efficiently — do NOT multiply by number of mattresses, instead add ~80% for each additional mattress.
-
-BED FRAMES (Category B — disassembled or can have items placed inside):
-- King bed frame (metal): 0.8-1.0 CY
-- King bed frame (wood/platform): 1.2-1.5 CY
-- Queen bed frame (metal): 0.6-0.8 CY
-- Queen bed frame (wood/platform): 1.0-1.2 CY
-- Twin/Full bed frame (metal): 0.4-0.6 CY
-- Twin/Full bed frame (wood): 0.7-0.9 CY
-- Headboard only: 0.3-0.5 CY
-- Footboard only: 0.2-0.3 CY
-- Bunk bed frame (disassembled): 1.5-2.0 CY
-- Complete bed (frame + mattress + box spring): Add frame + mattress values
-
-SEATING (NON-STACKABLE — Category A):
-- 3-seat sofa: 3.0-3.5 CY
-- Loveseat: 2.0-2.5 CY
-- Recliner: 2.0-2.5 CY
-- Sleeper sofa (closed): 3.5-4.0 CY
-- Futon (folded as couch): 1.8-2.2 CY
-- Futon (flat as bed): 2.5-3.0 CY
-- Sectional (per section): 2.5-3.0 CY
-- Waiting room chair (upholstered): 1.0-1.2 CY
-- Waiting room chair (stackable/plastic): 0.3-0.4 CY
-
-OFFICE FURNITURE (LIMITED STACKING):
-- Executive desk: 2.0-2.5 CY
-- Standard desk: 1.5-2.0 CY
-- L-shaped desk: 2.5-3.0 CY
-- Cubicle panel (per 6ft section): 0.5-0.7 CY
-- Office chair (executive): 0.8-1.0 CY
-- Office chair (task): 0.5-0.7 CY
-- Stacking chair: 0.2-0.3 CY
-- 5-drawer filing cabinet: 1.0-1.2 CY
-- 2-drawer lateral file: 0.8-1.0 CY
-- Bookshelf (5-shelf): 1.2-1.5 CY
-- Storage cabinet (2-door): 1.5-2.0 CY
-- Conference table (8ft): 2.5-3.0 CY
-
-APPLIANCES:
-- Refrigerator (full size): 2.5-3.0 CY
-- Mini fridge: 0.5-0.7 CY
-- Washer or dryer: 1.5-2.0 CY
-- Dishwasher: 1.0-1.2 CY
-- Microwave: 0.2-0.3 CY
-- Ice machine (commercial): 2.0-2.5 CY
-- Vending machine: 3.0-3.5 CY
-
-WASTE & CONTAINERS:
-- 96-gallon cart (full): 0.5 CY of contents
-- 64-gallon cart (full): 0.35 CY of contents
-- 33-gallon trash bag (full): 0.15-0.18 CY
-- 13-gallon bag (full): 0.06-0.08 CY
-- Red biohazard bag (33-gal, full): 0.15-0.18 CY
-- Gaylord/bulk box (full): 1.0-1.5 CY
-- Standard moving box (medium): 0.08-0.10 CY
-- Banker's box: 0.05 CY
-- Rolltainer/cage cart (full): 2.0-2.5 CY
-
-MISCELLANEOUS:
-- TV (any flat panel): 0.3-0.4 CY
-- Computer tower: 0.1 CY
-- CRT monitor (old): 0.2-0.3 CY
-- Flat monitor: 0.1-0.15 CY
-- Printer (desktop): 0.15-0.2 CY
-- Printer (floor copier): 1.5-2.0 CY
-- Treadmill: 2.0-2.5 CY
-- Exercise bike: 1.2-1.5 CY
-- Carpet roll (room-size): 1.0-1.5 CY
-
-═══════════════════════════════════════
-STEP 5: SUM ALL ITEMS
-═══════════════════════════════════════
-Add up the truck space consumed for all items.
-Show your itemized calculation:
-  Item 1: X CY
-  Item 2: Y CY
-  ...
-  TOTAL: Z CY
-
-═══════════════════════════════════════
-STEP 6: DETERMINE CONFIDENCE AND RANGE
-═══════════════════════════════════════
-Based on image quality and scale reference certainty:
-
-HIGH confidence (±10% range): 
-- Clear scale reference visible
-- Good lighting, minimal obstruction
-- Items clearly identifiable
-
-MEDIUM confidence (±20% range):
-- Indirect scale reference
-- Some items partially obscured
-- Moderate lighting issues
-
-LOW confidence (±30-40% range):
-- No clear scale reference
-- Poor image quality
-- Significant obstruction or unclear scope
-
-Your LOW estimate = likely × (1 - uncertainty%)
-Your HIGH estimate = likely × (1 + uncertainty%)
-
-═══════════════════════════════════════
-CONTAINER RULES
-═══════════════════════════════════════
-- NEVER count the dumpster/container/cart itself as volume
-- Dumpster cleanout: count debris around, on top, AND inside
-- Dumpster overflow: count debris around/on top + arms-length inside only
-- Rolltainer full of debris: ~2.0-2.5 CY per full rolltainer
-- For "how full is this truck" questions: estimate debris volume, express as fraction
-
-═══════════════════════════════════════
-TRUCK TRANSLATION (always include)
-═══════════════════════════════════════
-Standard dump truck: 15 cubic yards
-Express as fraction: "approximately X/Y of a standard 15-yard truck"
-Fractions: 1/8, 1/4, 1/3, 3/8, 1/2, 5/8, 2/3, 3/4, 7/8, full
-Use user-specified truck size if provided.
-
-═══════════════════════════════════════
-VENDOR VERIFICATION MODE
-═══════════════════════════════════════
-When verifying a vendor's claim (e.g., "vendor says 3/4 full"):
-- Estimate independently first
-- Compare: "My estimate: X CY. Vendor claimed: Y CY. Difference: Z CY (±W%)."
-- Flag if difference exceeds 20%
-
-═══════════════════════════════════════
-OUTPUT FORMAT — VALID JSON ONLY
-═══════════════════════════════════════
-Respond with ONLY a JSON object. No markdown, no backticks, no explanation outside the JSON.
-
-{
-  "items_identified": ["item 1 (Category A)", "item 2 (Category B)", ...],
-  "scale_reference": "what object you used for scale and its known dimensions",
-  "reasoning": "Itemized calculation showing: each item's dimensions, category, truck space formula used, individual volumes, and sum. Show ALL math.",
-  "low": <number - low end cubic yards>,
-  "likely": <number - most likely cubic yards>,
-  "high": <number - high end cubic yards>,
-  "confidence": "Low" | "Medium" | "High",
-  "truck_fraction": "approximately X/Y of a standard 15-yard truck",
-  "notes": "Any caveats, items partially obscured, suggestions for better photos, or flags about unusual items"
-}`;
-
-// Build user message content for both APIs
-function buildUserContent(params) {
-  const { photos, jobType, dumpsterSize, truckSize, vendorClaim, notes, referenceObject } = params;
-  
-  let userText = `Job type: ${jobType}`;
-  if (dumpsterSize && jobType !== "STANDARD" && jobType !== "TRUCK_VERIFY") {
-    userText += `\nDumpster size: ${dumpsterSize} yard`;
+function getClient() {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY environment variable is required");
   }
-  if (truckSize && truckSize !== 15) {
-    userText += `\nTruck size: ${truckSize} cubic yards (use this instead of default 15)`;
-  }
-  if (vendorClaim) {
-    userText += `\nVENDOR VERIFICATION: The vendor claims this is ${vendorClaim}. Estimate independently and compare.`;
-  }
-  if (referenceObject) {
-    userText += `\nUser-identified scale reference: ${referenceObject}`;
-  }
-  if (notes) {
-    userText += `\nAdditional notes: ${notes}`;
-  }
-  userText += `\n\nI am uploading ${photos.length} photo(s). Analyze all photos together — do NOT double-count items visible in multiple photos.`;
-  
-  return userText;
+
+  return new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+  });
 }
 
-// Call Claude API
-async function callClaude(params) {
-  const { apiKey, photos } = params;
-  const userText = buildUserContent(params);
-  
-  const content = [{ type: "text", text: userText }];
-  
-  for (let i = 0; i < photos.length; i++) {
-    const photo = photos[i];
-    content.push({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: photo.mediaType,
-        data: photo.base64,
-      },
-    });
-    if (photo.overlay) {
-      content.push({
-        type: "text",
-        text: `[Markup overlay for photo ${i + 1} — green = include/remove, red = exclude/stays]`,
-      });
-      content.push({
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: "image/png",
-          data: photo.overlay,
-        },
-      });
-    }
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error("Model did not return valid JSON");
+  }
+}
+
+function round1(n) {
+  const x = Number(n);
+  if (Number.isNaN(x)) return 0;
+  return Math.round((x + Number.EPSILON) * 10) / 10;
+}
+
+function clampMinZero(n) {
+  const x = Number(n);
+  if (Number.isNaN(x)) return 0;
+  return Math.max(0, x);
+}
+
+function confidenceLabel(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "high") return "High";
+  if (v === "medium" || v === "med") return "Medium";
+  return "Low";
+}
+
+function buildTruckFraction(likely, truckSize = 15) {
+  const ratio = likely / Math.max(truckSize, 1);
+
+  if (ratio <= 0.08) return "Minimum load";
+  if (ratio <= 0.20) return "About 1/8 truck";
+  if (ratio <= 0.33) return "About 1/4 truck";
+  if (ratio <= 0.58) return "About 1/2 truck";
+  if (ratio <= 0.83) return "About 3/4 truck";
+  return "About a full truck";
+}
+
+function parseVendorClaimToNumber(vendorClaim, truckSize = 15) {
+  if (!vendorClaim) return null;
+
+  const s = String(vendorClaim).toLowerCase().trim();
+
+  const cyMatch = s.match(/(\d+(\.\d+)?)\s*(cy|cubic yard|cubic yards|yard|yards)/i);
+  if (cyMatch) return parseFloat(cyMatch[1]);
+
+  const fracMatch = s.match(/(\d+)\s*\/\s*(\d+)/);
+  if (fracMatch) {
+    const num = parseFloat(fracMatch[1]);
+    const den = parseFloat(fracMatch[2]);
+    if (den > 0) return (num / den) * truckSize;
   }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2048,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content }],
-    }),
+  if (s.includes("half")) return truckSize * 0.5;
+  if (s.includes("quarter")) return truckSize * 0.25;
+  if (s.includes("three quarter") || s.includes("3/4")) return truckSize * 0.75;
+  if (s.includes("full")) return truckSize;
+
+  const plainNum = s.match(/(\d+(\.\d+)?)/);
+  if (plainNum) return parseFloat(plainNum[1]);
+
+  return null;
+}
+
+function buildPrompt({
+  jobType,
+  dumpsterSize,
+  truckSize,
+  vendorClaim,
+  notes,
+  referenceObject,
+}) {
+  const common = `
+You are estimating junk removal volume from photos.
+
+General rules:
+1. Return STRICT JSON only.
+2. Give a realistic estimate, not a sales estimate.
+3. If uncertain, widen the range instead of pretending precision.
+4. Use visible scale cues such as doors, carts, curbs, cinder blocks, pallets, dumpsters, fences, and truck walls.
+5. If a reference object is provided, use it.
+6. Avoid double counting items shown in multiple photos.
+7. Keep the reasoning short and practical.
+
+Reference object: ${referenceObject || "None provided"}
+Additional notes: ${notes || "None"}
+
+Return JSON in this exact shape:
+{
+  "low": number,
+  "likely": number,
+  "high": number,
+  "confidence": "High" | "Medium" | "Low",
+  "truckFraction": string,
+  "scaleReference": string,
+  "reasoning": string,
+  "itemsIdentified": [string],
+  "notes": string,
+  "truckBeforeFraction": number | null,
+  "truckAfterFraction": number | null,
+  "deltaFraction": number | null,
+  "vendorReviewStatus": string | null
+}
+`.trim();
+
+  if (jobType === "TRUCK_VERIFY") {
+    return `
+${common}
+
+Job type: Verify Truck Load
+Truck size: ${truckSize} cubic yards
+Vendor claim: ${vendorClaim || "None provided"}
+
+Truck verification rules:
+1. Primary evidence must be the truck bed BEFORE and AFTER photos.
+2. If the truck photo is unclear, use before-site photos as a secondary cross-check only.
+3. The truck may already contain debris before the job started.
+4. Estimate:
+   - truck fill before
+   - truck fill after
+   - net added load for this job
+5. Use the before-site and after-site photos only as supporting evidence.
+6. If the photos are too unclear, still give your best estimate, widen the range, and lower confidence.
+7. If the estimate is more than about 3 cubic yards away from the vendor claim, set vendorReviewStatus to "manager_review".
+8. If critical truck photos are missing or unclear, set vendorReviewStatus to "manager_review".
+
+Interpretation guidance:
+- "low", "likely", and "high" should represent NET cubic yards added by this job.
+- "truckBeforeFraction", "truckAfterFraction", and "deltaFraction" should be values from 0 to 1.
+- "truckFraction" should describe the net added load relative to a ${truckSize}-yard truck.
+- "vendorReviewStatus" should be either "ok" or "manager_review".
+`.trim();
+  }
+
+  if (jobType === "DUMPSTER_CLEANOUT") {
+    return `
+${common}
+
+Job type: Dumpster Cleanout
+Dumpster size: ${dumpsterSize || "Unknown"} cubic yards
+
+Rules for this mode:
+1. Estimate debris around, on top of, and inside the dumpster.
+2. For material inside the dumpster, count the visible removable portion.
+3. Be practical and conservative if depth is unclear.
+4. "truckFraction" should convert the likely estimate into a 15-yard truck equivalent.
+`.trim();
+  }
+
+  if (jobType === "DUMPSTER_OVERFLOW") {
+    return `
+${common}
+
+Job type: Dumpster Overflow
+Dumpster size: ${dumpsterSize || "Unknown"} cubic yards
+
+Rules for this mode:
+1. Estimate debris around and on top of the dumpster.
+2. Also include only an arms-length reasonable amount from inside if visible.
+3. Be practical and conservative if inside depth is unclear.
+4. "truckFraction" should convert the likely estimate into a 15-yard truck equivalent.
+`.trim();
+  }
+
+  return `
+${common}
+
+Job type: Standard Junk Removal
+
+Rules for this mode:
+1. Estimate all debris and items shown that appear intended for removal.
+2. Assume efficient loading into a junk truck.
+3. If multiple photos show the same pile or items, count them once.
+4. "truckFraction" should convert the likely estimate into a 15-yard truck equivalent.
+`.trim();
+}
+
+export async function estimateVolume({
+  photos,
+  jobType = "STANDARD",
+  dumpsterSize,
+  truckSize = 15,
+  vendorClaim,
+  notes,
+  referenceObject,
+}) {
+  if (!Array.isArray(photos) || photos.length === 0) {
+    throw new Error("At least one photo is required");
+  }
+
+  const ai = getClient();
+  const model = "gemini-2.5-flash";
+
+  const prompt = buildPrompt({
+    jobType,
+    dumpsterSize,
+    truckSize,
+    vendorClaim,
+    notes,
+    referenceObject,
   });
 
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Claude API error ${response.status}: ${errBody}`);
-  }
-
-  const data = await response.json();
-  const text = data.content
-    ?.filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n") ?? "";
-
-  return text;
-}
-
-// Call OpenAI API
-async function callOpenAI(params) {
-  const { openaiApiKey, photos } = params;
-  
-  if (!openaiApiKey) {
-    return null; // OpenAI not configured, skip
-  }
-  
-  const openai = new OpenAI({ apiKey: openaiApiKey });
-  const userText = buildUserContent(params);
-  
-  const content = [{ type: "text", text: userText }];
-  
-  for (let i = 0; i < photos.length; i++) {
-    const photo = photos[i];
-    content.push({
-      type: "image_url",
-      image_url: {
-        url: `data:${photo.mediaType};base64,${photo.base64}`,
-        detail: "high",
+  const parts = [
+    { text: prompt },
+    ...photos.map((p) => ({
+      inlineData: {
+        mimeType: p.mediaType || "image/jpeg",
+        data: p.base64,
       },
-    });
-    if (photo.overlay) {
-      content.push({
-        type: "text",
-        text: `[Markup overlay for photo ${i + 1} — green = include/remove, red = exclude/stays]`,
-      });
-      content.push({
-        type: "image_url",
-        image_url: {
-          url: `data:image/png;base64,${photo.overlay}`,
-          detail: "high",
-        },
-      });
+    })),
+  ];
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: "user",
+        parts,
+      },
+    ],
+    config: {
+      responseMimeType: "application/json",
+      temperature: 0.15,
+    },
+  });
+
+  const parsed = safeJsonParse(response.text);
+
+  let low = clampMinZero(parsed.low);
+  let likely = clampMinZero(parsed.likely);
+  let high = clampMinZero(parsed.high);
+
+  if (low > likely) [low, likely] = [likely, low];
+  if (likely > high) [likely, high] = [high, likely];
+  if (low > high) [low, high] = [high, low];
+
+  low = round1(low);
+  likely = round1(likely);
+  high = round1(high);
+
+  const beforeFrac =
+    parsed.truckBeforeFraction === null || parsed.truckBeforeFraction === undefined
+      ? null
+      : round1(parsed.truckBeforeFraction);
+
+  const afterFrac =
+    parsed.truckAfterFraction === null || parsed.truckAfterFraction === undefined
+      ? null
+      : round1(parsed.truckAfterFraction);
+
+  const deltaFrac =
+    parsed.deltaFraction === null || parsed.deltaFraction === undefined
+      ? null
+      : round1(parsed.deltaFraction);
+
+  let vendorReviewStatus = parsed.vendorReviewStatus || null;
+
+  if (jobType === "TRUCK_VERIFY") {
+    const claim = parseVendorClaimToNumber(vendorClaim, truckSize);
+    if (claim != null) {
+      const gap = Math.abs(likely - claim);
+      if (gap > 3) vendorReviewStatus = "manager_review";
+      else if (!vendorReviewStatus) vendorReviewStatus = "ok";
     }
   }
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      max_tokens: 2048,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content },
-      ],
-    });
-    
-    return response.choices[0]?.message?.content ?? "";
-  } catch (err) {
-    console.error("OpenAI API error:", err.message);
-    return null;
-  }
-}
+  const finalTruckSize = jobType === "TRUCK_VERIFY" ? truckSize : 15;
 
-// Parse JSON response from either model
-function parseResponse(text) {
-  if (!text) return null;
-  
-  const cleaned = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-  
-  try {
-    const parsed = JSON.parse(cleaned);
-    return {
-      low: parsed.low ?? 0,
-      high: parsed.high ?? 0,
-      likely: parsed.likely ?? 0,
-      confidence: parsed.confidence ?? "Low",
-      truckFraction: parsed.truck_fraction ?? "unknown",
-      reasoning: parsed.reasoning ?? "",
-      itemsIdentified: parsed.items_identified ?? [],
-      scaleReference: parsed.scale_reference ?? "none identified",
-      notes: parsed.notes ?? "",
-    };
-  } catch {
-    return null;
-  }
-}
-
-// Cross-validate and merge results
-function crossValidate(claudeResult, gptResult) {
-  // If only Claude worked, use it
-  if (!gptResult) {
-    return {
-      ...claudeResult,
-      crossValidation: {
-        method: "single_model",
-        claudeEstimate: claudeResult.likely,
-        gptEstimate: null,
-        agreement: null,
-        note: "OpenAI not configured or failed — using Claude only",
-      },
-    };
-  }
-  
-  const claudeLikely = claudeResult.likely;
-  const gptLikely = gptResult.likely;
-  
-  // Calculate percentage difference
-  const avg = (claudeLikely + gptLikely) / 2;
-  const diff = Math.abs(claudeLikely - gptLikely);
-  const pctDiff = avg > 0 ? (diff / avg) * 100 : 0;
-  
-  let finalResult;
-  let agreement;
-  let note;
-  
-  if (pctDiff <= 15) {
-    // Strong agreement — average the results, boost confidence
-    agreement = "STRONG";
-    note = `Both models agree within 15% (${pctDiff.toFixed(1)}% difference). High reliability.`;
-    
-    finalResult = {
-      low: Math.min(claudeResult.low, gptResult.low),
-      high: Math.max(claudeResult.high, gptResult.high),
-      likely: parseFloat(avg.toFixed(2)),
-      confidence: "High",
-      truckFraction: claudeResult.truckFraction, // Use Claude's fraction
-      reasoning: `CROSS-VALIDATED ESTIMATE (Claude + GPT agree)\n\n--- CLAUDE ANALYSIS ---\n${claudeResult.reasoning}\n\n--- GPT ANALYSIS ---\n${gptResult.reasoning}`,
-      itemsIdentified: [...new Set([...claudeResult.itemsIdentified, ...gptResult.itemsIdentified])],
-      scaleReference: claudeResult.scaleReference,
-      notes: claudeResult.notes,
-    };
-  } else if (pctDiff <= 30) {
-    // Moderate agreement — use weighted average, medium confidence
-    agreement = "MODERATE";
-    note = `Models differ by ${pctDiff.toFixed(1)}%. Using weighted average. Review recommended.`;
-    
-    // Weight toward the more conservative (higher) estimate for hospital contracts
-    const conservative = Math.max(claudeLikely, gptLikely);
-    const weighted = avg * 0.6 + conservative * 0.4;
-    
-    finalResult = {
-      low: Math.min(claudeResult.low, gptResult.low),
-      high: Math.max(claudeResult.high, gptResult.high),
-      likely: parseFloat(weighted.toFixed(2)),
-      confidence: "Medium",
-      truckFraction: claudeResult.truckFraction,
-      reasoning: `CROSS-VALIDATED ESTIMATE (Moderate agreement — ${pctDiff.toFixed(1)}% difference)\n\n--- CLAUDE ANALYSIS (${claudeLikely} CY) ---\n${claudeResult.reasoning}\n\n--- GPT ANALYSIS (${gptLikely} CY) ---\n${gptResult.reasoning}`,
-      itemsIdentified: [...new Set([...claudeResult.itemsIdentified, ...gptResult.itemsIdentified])],
-      scaleReference: claudeResult.scaleReference,
-      notes: `⚠️ MODELS DIFFER: Claude=${claudeLikely} CY, GPT=${gptLikely} CY. ${claudeResult.notes}`,
-    };
-  } else {
-    // Significant disagreement — flag for human review
-    agreement = "DISAGREEMENT";
-    note = `⚠️ SIGNIFICANT DISAGREEMENT: ${pctDiff.toFixed(1)}% difference. Human review required.`;
-    
-    // Use the higher estimate but flag prominently
-    const higher = Math.max(claudeLikely, gptLikely);
-    const lower = Math.min(claudeLikely, gptLikely);
-    
-    finalResult = {
-      low: lower,
-      high: higher,
-      likely: parseFloat(avg.toFixed(2)),
-      confidence: "Low",
-      truckFraction: claudeResult.truckFraction,
-      reasoning: `⚠️ CROSS-VALIDATION FAILED — HUMAN REVIEW REQUIRED\nClaude estimate: ${claudeLikely} CY\nGPT estimate: ${gptLikely} CY\nDifference: ${pctDiff.toFixed(1)}%\n\n--- CLAUDE ANALYSIS ---\n${claudeResult.reasoning}\n\n--- GPT ANALYSIS ---\n${gptResult.reasoning}`,
-      itemsIdentified: [...new Set([...claudeResult.itemsIdentified, ...gptResult.itemsIdentified])],
-      scaleReference: claudeResult.scaleReference,
-      notes: `🚨 REQUIRES HUMAN REVIEW: Claude=${claudeLikely} CY, GPT=${gptLikely} CY (${pctDiff.toFixed(1)}% apart). ${claudeResult.notes}`,
-    };
-  }
-  
-  finalResult.crossValidation = {
-    method: "dual_model",
-    claudeEstimate: claudeLikely,
-    gptEstimate: gptLikely,
-    percentDifference: parseFloat(pctDiff.toFixed(1)),
-    agreement,
-    note,
+  return {
+    low,
+    likely,
+    high,
+    confidence: confidenceLabel(parsed.confidence),
+    truckFraction:
+      typeof parsed.truckFraction === "string" && parsed.truckFraction.trim()
+        ? parsed.truckFraction.trim()
+        : buildTruckFraction(likely, finalTruckSize),
+    scaleReference:
+      typeof parsed.scaleReference === "string" && parsed.scaleReference.trim()
+        ? parsed.scaleReference.trim()
+        : (referenceObject || "Visual scale cues from the photos"),
+    reasoning:
+      typeof parsed.reasoning === "string" && parsed.reasoning.trim()
+        ? parsed.reasoning.trim()
+        : "Estimate based on visible volume, scale cues, and overall pile or load size.",
+    itemsIdentified: Array.isArray(parsed.itemsIdentified) ? parsed.itemsIdentified : [],
+    notes:
+      typeof parsed.notes === "string"
+        ? parsed.notes
+        : (notes || ""),
+    truckBeforeFraction: beforeFrac,
+    truckAfterFraction: afterFrac,
+    deltaFraction: deltaFrac,
+    vendorReviewStatus,
   };
-  
-  return finalResult;
-}
-
-// Main export — runs both models in parallel
-export async function estimateVolume(params) {
-  const { apiKey } = params;
-  const openaiApiKey = process.env.OPENAI_API_KEY;
-  
-  // Run both API calls in parallel
-  const [claudeText, gptText] = await Promise.all([
-    callClaude(params),
-    openaiApiKey ? callOpenAI({ ...params, openaiApiKey }) : Promise.resolve(null),
-  ]);
-  
-  const claudeResult = parseResponse(claudeText);
-  const gptResult = parseResponse(gptText);
-  
-  // If Claude failed, return error
-  if (!claudeResult) {
-    return {
-      low: 0,
-      high: 0,
-      likely: 0,
-      confidence: "Low",
-      truckFraction: "unknown",
-      reasoning: claudeText || "No response from Claude",
-      itemsIdentified: [],
-      scaleReference: "Could not parse response",
-      notes: "The AI response could not be parsed. Raw response is in the reasoning field.",
-      crossValidation: { method: "failed", note: "Claude parsing failed" },
-    };
-  }
-  
-  // Cross-validate and return merged result
-  return crossValidate(claudeResult, gptResult);
-}
-
-// Export for single-model mode (backwards compatible)
-export async function estimateVolumeSingleModel(params) {
-  const claudeText = await callClaude(params);
-  const claudeResult = parseResponse(claudeText);
-  
-  if (!claudeResult) {
-    return {
-      low: 0,
-      high: 0,
-      likely: 0,
-      confidence: "Low",
-      truckFraction: "unknown",
-      reasoning: claudeText || "No response",
-      itemsIdentified: [],
-      scaleReference: "Could not parse response",
-      notes: "The AI response could not be parsed.",
-    };
-  }
-  
-  return claudeResult;
 }
