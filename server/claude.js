@@ -121,6 +121,27 @@ Return JSON in this exact shape:
     return `
 ${common}
 
+if (jobType === "AUTO_DETECT") {
+  return `
+${common}
+
+Job type: Auto Detect
+
+Rules for this mode:
+1. First infer whether the photos are mainly:
+   - standard junk removal
+   - dumpster cleanout
+   - dumpster overflow
+   - truck load verification
+2. Base your estimate on the photo type you infer.
+3. If truck photos appear central to the job, use truck before/after logic when possible.
+4. Put the inferred job type into the "notes" field at the start, like:
+   "Detected type: Truck verification"
+5. "truckFraction" should convert the likely estimate into a 15-yard truck equivalent unless truck verification clearly uses a different stated truck size.
+`.trim();
+}
+
+
 Job type: Verify Truck Load
 Truck size: ${truckSize} cubic yards
 Vendor claim: ${vendorClaim || "None provided"}
