@@ -5,7 +5,7 @@ import multer from "multer";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { initDb, insertEstimate, listEstimates, getEstimate, updateEstimate } from "./db.js";
-import { estimateVolume } from "./claude.js";
+import { verifyVendorLoad } from "./geminiVerify.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -13,7 +13,10 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 10000;
 const PIN = process.env.APP_PIN || "1234";
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+if (!process.env.GEMINI_API_KEY) {
+  console.error("GEMINI_API_KEY environment variable is required");
+  process.exit(1);
+}
 
 if (!ANTHROPIC_API_KEY) {
   console.error("ANTHROPIC_API_KEY environment variable is required");
@@ -95,14 +98,14 @@ app.post(
       }
 
       const {
-        job_type = "STANDARD",
-        dumpster_size,
-        truck_size,
-        vendor_claim,
-        reference_object,
-        notes,
-        agent_label,
-      } = req.body;
+  job_type = "VENDOR_VERIFY",
+  dumpster_size,
+  truck_size,
+  vendor_claim,
+  reference_object,
+  notes,
+  agent_label,
+} = req.body;
 
       // Build photo data for Claude
       const photoData = photos.map((photo, i) => {
@@ -116,16 +119,17 @@ app.post(
         };
       });
 
-      const result = await estimateVolume({
-        apiKey: ANTHROPIC_API_KEY,
-        photos: photoData,
-        jobType: job_type,
-        dumpsterSize: dumpster_size,
-        truckSize: truck_size ? parseInt(truck_size) : 15,
-        vendorClaim: vendor_claim,
-        notes,
-        referenceObject: reference_object,
-      });
+      const claimedCy = vendor_claim ? parseFloat(vendor_claim) : 0;
+const truckCapacityCy = truck_size ? parseInt(truck_size, 10) : 15;
+
+const result = await verifyVendorLoad({
+  images: photoData.map((p) => ({
+    base64: p.base64,
+    mimeType: p.mediaType,
+  })),
+  claimedCy,
+  truckCapacityCy,
+});
 
       // Save to DB
       let dbRecord = null;
@@ -142,9 +146,11 @@ app.post(
           reference_object: reference_object || null,
           result_json: JSON.stringify(result),
           confidence: result.confidence,
-          low_cy: result.low,
-          likely_cy: result.likely,
-          high_cy: result.high,
+low_cy: result.estimated_delta_cy_low,
+likely_cy: (
+  (result.estimated_delta_cy_low + result.estimated_delta_cy_high) / 2
+).toFixed(1),
+high_cy: result.estimated_delta_cy_high,
         });
       } catch (dbErr) {
         console.error("DB insert error (non-fatal):", dbErr.message);

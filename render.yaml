@@ -4,7 +4,7 @@ services:
     runtime: docker
     plan: starter
     envVars:
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_API_KEY
         sync: false
       - key: APP_PIN
         sync: false
