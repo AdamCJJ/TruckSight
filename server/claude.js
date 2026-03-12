@@ -1,3 +1,81 @@
+import { GoogleGenAI } from "@google/genai";
+
+function getClient() {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY environment variable is required");
+  }
+
+  return new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+  });
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]);
+    throw new Error("Model did not return valid JSON");
+  }
+}
+
+function round1(n) {
+  const x = Number(n);
+  if (Number.isNaN(x)) return 0;
+  return Math.round((x + Number.EPSILON) * 10) / 10;
+}
+
+function clampMinZero(n) {
+  const x = Number(n);
+  if (Number.isNaN(x)) return 0;
+  return Math.max(0, x);
+}
+
+function confidenceLabel(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "high") return "High";
+  if (v === "medium" || v === "med") return "Medium";
+  return "Low";
+}
+
+function buildTruckFraction(likely, truckSize = 15) {
+  const ratio = likely / Math.max(truckSize, 1);
+
+  if (ratio <= 0.08) return "Minimum load";
+  if (ratio <= 0.2) return "About 1/8 truck";
+  if (ratio <= 0.33) return "About 1/4 truck";
+  if (ratio <= 0.58) return "About 1/2 truck";
+  if (ratio <= 0.83) return "About 3/4 truck";
+  return "About a full truck";
+}
+
+function parseVendorClaimToNumber(vendorClaim, truckSize = 15) {
+  if (!vendorClaim) return null;
+
+  const s = String(vendorClaim).toLowerCase().trim();
+
+  const cyMatch = s.match(/(\d+(\.\d+)?)\s*(cy|cubic yard|cubic yards|yard|yards)/i);
+  if (cyMatch) return parseFloat(cyMatch[1]);
+
+  const fracMatch = s.match(/(\d+)\s*\/\s*(\d+)/);
+  if (fracMatch) {
+    const num = parseFloat(fracMatch[1]);
+    const den = parseFloat(fracMatch[2]);
+    if (den > 0) return (num / den) * truckSize;
+  }
+
+  if (s.includes("half")) return truckSize * 0.5;
+  if (s.includes("quarter")) return truckSize * 0.25;
+  if (s.includes("three quarter") || s.includes("3/4")) return truckSize * 0.75;
+  if (s.includes("full")) return truckSize;
+
+  const plainNum = s.match(/(\d+(\.\d+)?)/);
+  if (plainNum) return parseFloat(plainNum[1]);
+
+  return null;
+}
+
 function buildPrompt({
   jobType,
   dumpsterSize,
@@ -129,4 +207,115 @@ Rules for this mode:
 3. If multiple photos show the same pile or items, count them once.
 4. "truckFraction" should convert the likely estimate into a 15-yard truck equivalent.
 `.trim();
+}
+
+export async function estimateVolume({
+  photos,
+  jobType = "STANDARD",
+  dumpsterSize,
+  truckSize = 15,
+  vendorClaim,
+  notes,
+  referenceObject,
+}) {
+  if (!Array.isArray(photos) || photos.length === 0) {
+    throw new Error("At least one photo is required");
+  }
+
+  const ai = getClient();
+  const model = "gemini-2.5-flash";
+
+  const prompt = buildPrompt({
+    jobType,
+    dumpsterSize,
+    truckSize,
+    vendorClaim,
+    notes,
+    referenceObject,
+  });
+
+  const parts = [
+    { text: prompt },
+    ...photos.map((p) => ({
+      inlineData: {
+        mimeType: p.mediaType || "image/jpeg",
+        data: p.base64,
+      },
+    })),
+  ];
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: "user",
+        parts,
+      },
+    ],
+    config: {
+      responseMimeType: "application/json",
+      temperature: 0.15,
+    },
+  });
+
+  const parsed = safeJsonParse(response.text);
+
+  let low = clampMinZero(parsed.low);
+  let likely = clampMinZero(parsed.likely);
+  let high = clampMinZero(parsed.high);
+
+  if (low > likely) [low, likely] = [likely, low];
+  if (likely > high) [likely, high] = [high, likely];
+  if (low > high) [low, high] = [high, low];
+
+  low = round1(low);
+  likely = round1(likely);
+  high = round1(high);
+
+  const beforeFrac =
+    parsed.truckBeforeFraction == null ? null : round1(parsed.truckBeforeFraction);
+
+  const afterFrac =
+    parsed.truckAfterFraction == null ? null : round1(parsed.truckAfterFraction);
+
+  const deltaFrac =
+    parsed.deltaFraction == null ? null : round1(parsed.deltaFraction);
+
+  let vendorReviewStatus = parsed.vendorReviewStatus || null;
+
+  if (jobType === "TRUCK_VERIFY") {
+    const claim = parseVendorClaimToNumber(vendorClaim, truckSize);
+    if (claim != null) {
+      const gap = Math.abs(likely - claim);
+      if (gap > 3) vendorReviewStatus = "manager_review";
+      else if (!vendorReviewStatus) vendorReviewStatus = "ok";
+    }
+  }
+
+  const finalTruckSize = jobType === "TRUCK_VERIFY" ? truckSize : 15;
+
+  return {
+    low,
+    likely,
+    high,
+    confidence: confidenceLabel(parsed.confidence),
+    truckFraction:
+      typeof parsed.truckFraction === "string" && parsed.truckFraction.trim()
+        ? parsed.truckFraction.trim()
+        : buildTruckFraction(likely, finalTruckSize),
+    scaleReference:
+      typeof parsed.scaleReference === "string" && parsed.scaleReference.trim()
+        ? parsed.scaleReference.trim()
+        : (referenceObject || "Visual scale cues from the photos"),
+    reasoning:
+      typeof parsed.reasoning === "string" && parsed.reasoning.trim()
+        ? parsed.reasoning.trim()
+        : "Estimate based on visible volume, scale cues, and overall pile or load size.",
+    itemsIdentified: Array.isArray(parsed.itemsIdentified) ? parsed.itemsIdentified : [],
+    notes: typeof parsed.notes === "string" ? parsed.notes : (notes || ""),
+    truckBeforeFraction: beforeFrac,
+    truckAfterFraction: afterFrac,
+    deltaFraction: deltaFrac,
+    vendorReviewStatus,
+  };
 }
