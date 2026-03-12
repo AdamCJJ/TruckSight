@@ -86,7 +86,7 @@ app.post(
       }
 
       const {
-        job_type = "STANDARD",
+        job_type = "AUTO_DETECT",
         dumpster_size,
         truck_size,
         vendor_claim,
