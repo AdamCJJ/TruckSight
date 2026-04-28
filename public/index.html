@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TruckSight — AI Volume Estimation</title>
+  <meta name="description" content="Professional AI-powered volume estimation for junk removal teams. Accurate cubic yard estimates from photos in seconds." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23f59e0b'/><text x='16' y='22' text-anchor='middle' font-size='14' font-weight='900' fill='%231c1917'>TS</text></svg>" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+  <!-- ═══ Login Screen ═══ -->
+  <div id="loginScreen" class="login-screen">
+    <div class="login-container">
+      <div class="login-brand">
+        <div class="brand-icon">TS</div>
+        <h1 class="brand-name">TruckSight</h1>
+        <p class="brand-tagline">AI-Powered Volume Estimation</p>
+      </div>
+      <div class="login-card">
+        <h2>Welcome back</h2>
+        <p class="text-secondary">Enter your team PIN to continue</p>
+        <input id="pinInput" type="password" class="form-input" placeholder="Enter PIN" autocomplete="off" style="margin-top:20px" />
+        <p id="loginErr" class="error-text"></p>
+        <button id="loginBtn" class="btn btn-primary btn-full" style="margin-top:16px">
+          <span>Unlock</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Main App ═══ -->
+  <div id="appScreen" class="hidden">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-brand">
+          <div class="brand-icon-sm">TS</div>
+          <span class="topbar-name">TruckSight</span>
+        </div>
+        <nav class="topbar-nav">
+          <button id="navEstimate" class="nav-pill active">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h7"/></svg>
+            Estimate
+          </button>
+          <button id="navVerify" class="nav-pill">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/></svg>
+            Verify
+          </button>
+          <button id="navHistory" class="nav-pill">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            History
+          </button>
+        </nav>
+        <button id="logoutBtn" class="btn-ghost" title="Logout">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- ═══ Estimate Screen ═══ -->
+    <main id="estimateScreen" class="main-content">
+      <div class="estimate-grid">
+
+        <!-- Left Column: Form -->
+        <div class="form-column">
+
+          <!-- Agent Name -->
+          <div class="form-card">
+            <label class="form-label" for="agentLabel">Agent Name</label>
+            <input id="agentLabel" type="text" class="form-input" placeholder="e.g., Nicole, Stephanie, Adam" />
+          </div>
+
+          <!-- Job Type + Truck Size -->
+          <div class="form-card">
+            <div class="form-row">
+              <div class="form-field">
+                <label class="form-label" for="jobType">Job Type</label>
+                <select id="jobType" class="form-select">
+                  <option value="RESIDENTIAL">Residential Junk Removal</option>
+                  <option value="COMMERCIAL">Commercial Junk Removal</option>
+                  <option value="DUMPSTER">Dumpster Cleanout</option>
+                  <option value="CONSTRUCTION">Construction Debris</option>
+                  <option value="ESTATE">Estate Cleanout</option>
+                  <option value="APPLIANCE">Appliance Removal</option>
+                  <option value="FURNITURE">Furniture Removal</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="truckSize">Truck Size <span class="text-muted">(yd³)</span></label>
+                <input id="truckSize" type="number" class="form-input" value="15" min="1" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent Notes -->
+          <div class="form-card">
+            <label class="form-label" for="notesInput">Agent Notes <span class="text-muted">(optional)</span></label>
+            <textarea id="notesInput" class="form-textarea" rows="2" placeholder='e.g., "Only remove items near the door" or "Include everything in the garage"'></textarea>
+          </div>
+
+          <!-- Photo Upload -->
+          <div class="form-card">
+            <label class="form-label">Photos <span class="text-muted">(up to 15)</span></label>
+            <div id="dropZone" class="drop-zone">
+              <div class="drop-zone-content">
+                <svg class="drop-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="drop-text">Click or drag photos here</p>
+                <p class="drop-hint">Best results: multiple angles, good lighting</p>
+              </div>
+              <input id="photoInput" type="file" accept="image/*" multiple class="drop-input" />
+            </div>
+            <div id="photoGrid" class="photo-grid"></div>
+          </div>
+
+          <!-- Markup Section (appears after photos uploaded) -->
+          <div id="markupSection" class="hidden">
+            <div class="form-card markup-intro">
+              <div class="markup-intro-content">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                <div>
+                  <strong>Mark Items for Removal</strong>
+                  <p class="text-secondary">Use green to mark items to <b>remove</b> and red to mark items to <b>keep</b>. Choose from brush, circle, or pin tools. Marking is optional — skip if everything should be estimated.</p>
+                </div>
+              </div>
+            </div>
+            <div id="markupArea"></div>
+          </div>
+
+          <!-- Actions -->
+          <div class="form-actions">
+            <button id="estimateBtn" class="btn btn-primary btn-lg" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <span>Calculate Estimate</span>
+            </button>
+            <button id="resetBtn" class="btn btn-ghost-light hidden">New Estimate</button>
+          </div>
+
+        </div>
+
+        <!-- Right Column: Results -->
+        <div class="results-column">
+          <div id="resultPlaceholder" class="result-placeholder">
+            <div class="placeholder-glow">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+                <line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+            </div>
+            <h3>Upload photos and estimate</h3>
+            <p class="text-secondary">AI-powered results with full reasoning will appear here</p>
+          </div>
+          <div id="resultArea" class="hidden"></div>
+        </div>
+
+      </div>
+    </main>
+
+    <!-- ═══ Verify Screen (vendor billing verification) ═══ -->
+    <main id="verifyScreen" class="main-content hidden">
+      <div class="estimate-grid">
+        <div class="form-column">
+          <div class="form-card">
+            <h2 style="margin:0 0 4px 0;font-size:18px;">Vendor Verification</h2>
+            <p class="text-secondary" style="margin:0;">Verify a vendor's claimed cubic-yard volume against the photos they submitted. Photos can be uploaded in any order — the AI classifies each one.</p>
+          </div>
+
+          <div class="form-card">
+            <div class="form-row">
+              <div class="form-field">
+                <label class="form-label" for="vfVendorId">Vendor *</label>
+                <input id="vfVendorId" type="text" class="form-input" placeholder="e.g., CARDS Recycling, ABC Hauling" />
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="vfClaimedCy">Vendor Claim <span class="text-muted">(yd³) *</span></label>
+                <input id="vfClaimedCy" type="number" step="0.5" min="0" class="form-input" placeholder="e.g., 6" />
+              </div>
+            </div>
+          </div>
+
+          <div class="form-card">
+            <div class="form-row">
+              <div class="form-field">
+                <label class="form-label" for="vfEquipmentType">Equipment</label>
+                <select id="vfEquipmentType" class="form-select">
+                  <option value="UNKNOWN">Unknown / Auto-detect</option>
+                  <option value="DUMP_TRUCK_10YD">Dump Truck — 10 yd³</option>
+                  <option value="DUMP_TRUCK_15YD">Dump Truck — 15 yd³</option>
+                  <option value="DUMP_TRUCK_20YD">Dump Truck — 20 yd³</option>
+                  <option value="DUMPSTER_2YD">Front-Load Dumpster — 2 yd³</option>
+                  <option value="DUMPSTER_4YD">Front-Load Dumpster — 4 yd³</option>
+                  <option value="DUMPSTER_6YD">Front-Load Dumpster — 6 yd³</option>
+                  <option value="ROLLOFF_10YD">Roll-Off — 10 yd³</option>
+                  <option value="ROLLOFF_20YD">Roll-Off — 20 yd³</option>
+                  <option value="ROLLOFF_30YD">Roll-Off — 30 yd³</option>
+                  <option value="ROLLOFF_40YD">Roll-Off — 40 yd³</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label class="form-label" for="vfCapacity">Capacity Override <span class="text-muted">(yd³)</span></label>
+                <input id="vfCapacity" type="number" step="0.5" min="0" class="form-input" placeholder="optional" />
+              </div>
+            </div>
+          </div>
+
+          <div class="form-card">
+            <label class="form-label" for="vfScopeText">Job Scope <span class="text-muted">(paste from client email)</span></label>
+            <textarea id="vfScopeText" class="form-textarea" rows="4" placeholder='e.g., "Take ANY overflow from the ground surrounding the containers and an arms length from the dumpsters. Check with site manager for interior trash."'></textarea>
+          </div>
+
+          <div class="form-card">
+            <label class="form-label" for="vfNotes">Agent Notes <span class="text-muted">(optional)</span></label>
+            <textarea id="vfNotes" class="form-textarea" rows="2" placeholder="Anything unusual about this job"></textarea>
+          </div>
+
+          <div class="form-card">
+            <label class="form-label">Photos <span class="text-muted">(any order — AI classifies them)</span></label>
+            <div id="vfDropZone" class="drop-zone">
+              <div class="drop-zone-content">
+                <svg class="drop-icon" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p class="drop-text">Click or drag vendor photos here</p>
+                <p class="drop-hint">Empty truck, before, after, loaded truck — any order</p>
+              </div>
+              <input id="vfPhotoInput" type="file" accept="image/*" multiple class="drop-input" />
+            </div>
+            <div id="vfPhotoGrid" class="photo-grid"></div>
+          </div>
+
+          <div class="form-actions">
+            <button id="vfSubmitBtn" class="btn btn-primary btn-lg" disabled>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
+              <span>Run Verification</span>
+            </button>
+            <button id="vfResetBtn" class="btn btn-ghost-light hidden">New Verification</button>
+          </div>
+        </div>
+
+        <div class="results-column">
+          <div id="vfPlaceholder" class="result-placeholder">
+            <div class="placeholder-glow">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 12l2 2 4-4"/><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/></svg>
+            </div>
+            <h3>Verify a vendor billing</h3>
+            <p class="text-secondary">Enter the vendor's claim, paste the scope, upload photos. AI will classify each photo, estimate volume from the loaded truck, cross-check against before/after, and flag overbilling.</p>
+          </div>
+          <div id="vfResultArea" class="hidden"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ═══ History Screen ═══ -->
+    <main id="historyScreen" class="main-content hidden">
+      <div class="history-container">
+        <div id="statsBar"></div>
+        <div id="historyList"></div>
+      </div>
+    </main>
+
+  </div>
+
+  <script src="/app.js"></script>
+  <script src="/verify.js"></script>
+</body>
+</html>

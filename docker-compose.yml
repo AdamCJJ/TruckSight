@@ -1,0 +1,12 @@
+version: '3.9'
+services:
+  app:
+    build: .
+    ports:
+      - "10000:10000"
+    environment:
+      - PORT=10000
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - APP_PIN=${APP_PIN:-1234}
+      - SESSION_SECRET=local-dev-secret
+      # No DATABASE_URL = uses in-memory storage (fine for local testing)

@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: trucksight
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: APP_PIN
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: trucksight-db
+          property: connectionString
+
+databases:
+  - name: trucksight-db
+    plan: free
+    databaseName: trucksight
