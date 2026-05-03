@@ -5,7 +5,7 @@ AI-powered junk removal volume estimation for teams that need accurate cubic yar
 ## Features
 
 - **Guided estimation workflow** - job type selection, truck size, agent notes, and photo markup
-- **Client estimate mode** - residential, commercial, dumpster cleanout, construction, estate cleanout, appliance/furniture, and other jobs
+- **Client estimate mode** - junk removal, dumpster overflow, and dumpster cleanout jobs
 - **Vendor verification mode** - compare vendor claims against independent AI estimates
 - **Photo markup** - green/red scribbles, circles, and pins to include or exclude items
 - **Full reasoning output** - items identified, scale reference, step-by-step math, confidence level, hidden volume, and photo quality

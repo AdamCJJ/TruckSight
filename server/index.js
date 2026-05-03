@@ -84,10 +84,10 @@ const upload = multer({
 
 // ─── Validation schemas ───
 
-const JOB_TYPES = ["RESIDENTIAL", "COMMERCIAL", "DUMPSTER_CLEANOUT", "CONSTRUCTION", "ESTATE_CLEANOUT", "APPLIANCE_FURNITURE", "OTHER"];
+const JOB_TYPES = ["JUNK_REMOVAL", "DUMPSTER_OVERFLOW", "DUMPSTER_CLEANOUT"];
 
 const estimateSchema = z.object({
-  job_type: z.enum(JOB_TYPES).default("RESIDENTIAL"),
+  job_type: z.enum(JOB_TYPES).default("JUNK_REMOVAL"),
   truck_size: z
     .string()
     .optional()
