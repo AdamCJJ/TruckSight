@@ -644,8 +644,13 @@ estimateBtn.onclick = async () => {
 
   for (let i = 0; i < editors.length; i++) {
     const ed = editors[i];
+    if (ed.actions.length === 0) continue;
+
     const blob = await canvasToBlob(ed.canvas);
-    form.append("overlays", blob, `overlay_${i + 1}.png`);
+    if (blob) {
+      form.append("overlays", blob, `overlay_${i + 1}.png`);
+      form.append("overlay_indexes", String(i));
+    }
 
     // Build text description of pin placements
     const pins = ed.actions.filter((a) => a.type === "pin");

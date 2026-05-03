@@ -247,7 +247,7 @@ export async function getStats() {
       }, 0);
       avgError = (totalErr / calibrated.length) * 100;
     }
-    return { total: all.length, calibrated: calibrated.length, avgError };
+    return { total: all.length, calibrated: calibrated.length, avg_error: avgError };
   }
 
   const r = await p.query(`

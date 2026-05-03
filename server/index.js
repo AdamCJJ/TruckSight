@@ -136,6 +136,13 @@ const historyQuerySchema = z.object({
     .pipe(z.number().int().min(0)),
 });
 
+const actualVolumeSchema = z.object({
+  actual_volume: z
+    .union([z.string().trim().min(1), z.number()])
+    .transform((v) => Number(v))
+    .pipe(z.number().min(0).max(200)),
+});
+
 // Auth middleware
 function requireAuth(req, res, next) {
   if (req.session && req.session.authed) return next();
@@ -186,11 +193,26 @@ app.post(
       }
       const { job_type, truck_size, notes, agent_label, markup_descriptions } = bodyParse.data;
 
+      const overlayIndexesRaw = req.body.overlay_indexes;
+      const overlayIndexes = Array.isArray(overlayIndexesRaw)
+        ? overlayIndexesRaw
+        : overlayIndexesRaw !== undefined
+          ? [overlayIndexesRaw]
+          : [];
+      const overlaysByPhotoIndex = new Map();
+      overlays.forEach((overlay, i) => {
+        const parsedIndex = Number.parseInt(overlayIndexes[i], 10);
+        const photoIndex = Number.isInteger(parsedIndex) ? parsedIndex : i;
+        if (photoIndex >= 0 && photoIndex < photos.length) {
+          overlaysByPhotoIndex.set(photoIndex, overlay);
+        }
+      });
+
       // Build photo data for Gemini
       const photoData = photos.map((photo, i) => {
         const base64 = photo.buffer.toString("base64");
         const mediaType = photo.mimetype || "image/jpeg";
-        const overlay = overlays[i];
+        const overlay = overlaysByPhotoIndex.get(i);
         return {
           base64,
           mediaType,
@@ -368,11 +390,12 @@ app.get("/api/history/:id", requireAuth, async (req, res) => {
 
 app.post("/api/history/:id/actual", requireAuth, async (req, res) => {
   try {
-    const { actual_volume } = req.body;
-    if (actual_volume === undefined || actual_volume === null) {
-      return res.status(400).json({ error: "actual_volume is required" });
+    const bodyParse = actualVolumeSchema.safeParse(req.body);
+    if (!bodyParse.success) {
+      return res.status(400).json({ error: "Invalid request", details: bodyParse.error.flatten().fieldErrors });
     }
-    const row = await updateEstimate(req.params.id, { actual_volume: parseFloat(actual_volume) });
+    const { actual_volume } = bodyParse.data;
+    const row = await updateEstimate(req.params.id, { actual_volume });
     return res.json(row);
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -387,7 +410,7 @@ app.get("/api/stats", requireAuth, async (req, res) => {
     const stats = await getStats();
     return res.json(stats);
   } catch (err) {
-    return res.json({ total: 0, calibrated: 0, avgError: null });
+    return res.json({ total: 0, calibrated: 0, avg_error: null });
   }
 });
 
