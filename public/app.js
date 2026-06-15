@@ -739,6 +739,12 @@ function renderResult(r) {
     confReasonHtml = `<div style="font-size:0.8rem;margin-top:4px;opacity:0.7">${esc(r.confidenceReason)}</div>`;
   }
 
+  let calHtml = "";
+  if (r.calibration) {
+    const c = r.calibration;
+    calHtml = `<div class="result-truck" style="margin-top:8px">🎯 <strong>Calibrated: ${c.calibrated_low}–${c.calibrated_high} CY (likely ${c.calibrated_likely})</strong> — adjusted ×${c.factor} from ${c.sample_size} completed jobs of this type</div>`;
+  }
+
   resultArea.innerHTML = `
     <div class="results-sticky animate-in">
       <div class="result-hero">
@@ -752,6 +758,7 @@ function renderResult(r) {
         </div>
         ${confReasonHtml}
         <div class="result-truck">🚛 <strong>${esc(r.truckFraction)}</strong></div>
+        ${calHtml}
         ${weightHtml}
         ${densityHtml}
         ${laborHtml}

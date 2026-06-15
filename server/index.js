@@ -6,7 +6,7 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { initDb, insertEstimate, listEstimates, getEstimate, updateEstimate, getVendorStats } from "./db.js";
+import { initDb, insertEstimate, listEstimates, getEstimate, updateEstimate, getVendorStats, getCalibrationFactor } from "./db.js";
 import { estimateVolume, GeminiParseError } from "./gemini.js";
 import { verifyJob } from "./verification.js";
 
@@ -228,6 +228,25 @@ app.post(
         notes,
         markupDescriptions: markup_descriptions || "",
       });
+
+      // Apply historical calibration once enough ground-truth jobs of this type exist.
+      // The raw model numbers stay in low_cy/likely_cy/high_cy so the factor math
+      // never feeds back on itself.
+      try {
+        const cal = await getCalibrationFactor(job_type);
+        if (cal && cal.factor >= 0.5 && cal.factor <= 2.0) {
+          const f = Math.round(cal.factor * 100) / 100;
+          result.calibration = {
+            factor: f,
+            sample_size: cal.sample_size,
+            calibrated_low: Math.round(result.low * f * 2) / 2,
+            calibrated_likely: Math.round(result.likely * f * 2) / 2,
+            calibrated_high: Math.round(result.high * f * 2) / 2,
+          };
+        }
+      } catch (calErr) {
+        console.error("Calibration lookup error (non-fatal):", calErr.message);
+      }
 
       // Save to DB
       let dbRecord = null;

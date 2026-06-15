@@ -57,19 +57,24 @@ Method:
    - 6 yd front-load dumpster (6' × 6' × 5')
    If equipment_capacity_cy was provided, USE THAT as ground truth.
 
-2. Estimate fill level by side-wall reference:
+2. Estimate fill level by side-wall reference. fill_pct is CAPPED at 100 (level with the rails):
    - Below 50% wall = under half
    - At 50% = half full
    - At 75% = three-quarters
-   - At 100% (level with rails) = full to capacity
-   - Heaping above rails = add 10–25% bonus volume depending on heap height
+   - At 100% (level with rails) = full to rated capacity — NEVER report fill_pct above 100
 
-3. Apply packing factor:
+3. If material heaps ABOVE the rails, count that volume ONLY in heap_adjustment_cy (typically 10–25% of capacity depending on heap height). Never also raise fill_pct for above-rail material — that double-counts.
+
+4. Apply packing factor:
    - Loose bags + boxes (typical commercial overflow) = 0.75–0.85 packing
    - Flat cardboard tightly packed = 0.95 packing
    - Furniture with voids = 0.65–0.75 packing
 
-4. Compute: truck_capacity_cy × fill_pct × packing_factor + heap_adjustment = estimated CY
+5. Compute: truck_capacity_cy × (fill_pct ÷ 100) × packing_factor + heap_adjustment_cy = estimated CY
+
+WORKED EXAMPLE:
+15-yd dump truck, load level at ~75% of wall height, mixed bags and boxes (packing 0.8), nothing above the rails:
+15 × 0.75 × 0.8 = 9.0 CY. Vendor claimed 12 CY → variance = (12 − 9) / 9 = +33% → FLAG for manager review.
 
 ═══════════════════════════════════════
 TASK 3: BEFORE/AFTER DELTA AS CROSS-CHECK
@@ -120,7 +125,7 @@ OUTPUT FORMAT — VALID JSON ONLY
     "low_cy": <number or null>,
     "high_cy": <number or null>,
     "truck_identified": "string description of truck/container",
-    "fill_pct": <number 0-120 or null>,
+    "fill_pct": <number 0-100 or null — above-rail material goes in heap_adjustment_cy instead>,
     "packing_factor": <number 0-1 or null>,
     "heap_adjustment_cy": <number or 0>,
     "reasoning": "step-by-step math"
@@ -220,17 +225,19 @@ export async function verifyJob(params) {
   );
   parsed.missing_photos = missing;
 
-  // If the model didn't compute variance but we have both numbers, fill it in
+  // Fill in variance only where the model left gaps — don't overwrite its own analysis
   if (vendorClaimedCy != null && parsed.consensus?.estimated_cy != null) {
     const claimed = Number(vendorClaimedCy);
     const est = Number(parsed.consensus.estimated_cy);
     if (est > 0) {
-      const variancePct = Math.round(((claimed - est) / est) * 1000) / 10;
       parsed.variance = parsed.variance || {};
-      parsed.variance.variance_pct = variancePct;
+      if (parsed.variance.variance_pct == null || !Number.isFinite(Number(parsed.variance.variance_pct))) {
+        parsed.variance.variance_pct = Math.round(((claimed - est) / est) * 1000) / 10;
+      }
       parsed.variance.vendor_claimed_cy = claimed;
       parsed.variance.estimated_cy = est;
       if (!parsed.variance.flag) {
+        const variancePct = Number(parsed.variance.variance_pct);
         parsed.variance.flag =
           variancePct > 50 ? "ANOMALY" :
           variancePct > 25 ? "FLAG" :

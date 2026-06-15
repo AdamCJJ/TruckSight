@@ -235,6 +235,32 @@ export async function updateEstimate(id, updates) {
   return r.rows[0];
 }
 
+// Historical correction factor: AVG(actual / predicted) for completed jobs of this type.
+// Returns null until there are enough ground-truth samples to be meaningful.
+const CALIBRATION_MIN_SAMPLE = 5;
+
+export async function getCalibrationFactor(jobType) {
+  const p = getPool();
+  if (!p) {
+    const rows = memoryStore.estimates.filter(
+      (e) => e.job_type === jobType && e.actual_volume != null && e.likely_cy > 0
+    );
+    if (rows.length < CALIBRATION_MIN_SAMPLE) return null;
+    const factor = rows.reduce((sum, e) => sum + e.actual_volume / e.likely_cy, 0) / rows.length;
+    return { factor, sample_size: rows.length };
+  }
+
+  const r = await p.query(
+    `SELECT AVG(actual_volume / likely_cy) AS factor, COUNT(*)::int AS sample_size
+     FROM estimates
+     WHERE job_type = $1 AND actual_volume IS NOT NULL AND likely_cy > 0`,
+    [jobType]
+  );
+  const row = r.rows[0];
+  if (!row || row.sample_size < CALIBRATION_MIN_SAMPLE || row.factor == null) return null;
+  return { factor: Number(row.factor), sample_size: row.sample_size };
+}
+
 export async function getStats() {
   const p = getPool();
   if (!p) {

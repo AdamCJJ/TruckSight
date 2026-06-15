@@ -81,7 +81,7 @@ CRITICAL — photos may show the SAME area from different angles:
 6. If a photo shows a truck bed, focus ONLY on the interior — use side walls as height reference.
 
 TRUCK BED CALIBRATION (when visible):
-Standard junk truck = 10.5 ft × 8.5 ft × 5 ft = 15 cubic yards
+Standard junk truck = 10 ft × 8 ft × 5 ft = 400 ft³ ≈ 15 cubic yards
 Wall height = 5 ft (use as ruler):
 - Load at 50% wall height = 7–8 yards
 - Load at 75% wall height = 10–11 yards
@@ -159,6 +159,10 @@ OCCLUSION RULES:
 ═══════════════════════════════════════
 STEP 7: COMPRESSION FACTORS BY MATERIAL
 ═══════════════════════════════════════
+CRITICAL DECISION RULE — never double-apply compression:
+- If an item matches the STEP 8 catalog, use the STEP 8 truck-loaded volume DIRECTLY. Do NOT multiply it by a STEP 7 factor — STEP 8 values ALREADY include loading voids and compression.
+- Use STEP 7 multipliers ONLY for loose piles and uncatalogued material where you measured raw visual volume from dimensions (L × W × H).
+
 Loose piles compress when loaded by pros. Apply these multipliers to raw visual volume to get truck-loaded volume:
 
 - Loose clothing / soft goods / bedding: × 0.4
@@ -175,7 +179,7 @@ Assume professional packing efficiency of 70–80% for mixed loads.
 ═══════════════════════════════════════
 STEP 8: KNOWN TRUCK-LOADED VOLUMES
 ═══════════════════════════════════════
-When you can identify specific items, use these values directly (they already account for truck-loading voids):
+When you can identify specific items, use these values directly. They ALREADY account for truck-loading voids and compression — never multiply them by STEP 7 factors:
 
 SEATING:
 - Armchair / accent chair: ~1 CY
@@ -284,6 +288,33 @@ TRUCK TRANSLATION (always include)
 Express as a fraction of the user's truck size.
 Use simple fractions: 1/8, 1/4, 1/3, 3/8, 1/2, 5/8, 2/3, 3/4, 7/8, full, 1.5 trucks
 Default: 15 cubic yard truck unless specified otherwise.
+
+═══════════════════════════════════════
+WORKED EXAMPLES — CALIBRATE YOUR ESTIMATES TO THESE
+═══════════════════════════════════════
+EXAMPLE 1 — Simple residential (1 photo):
+Living room: 3-seat leather sofa, floor lamp with side table, small trash can, wall mirror.
+Anchor: electrical outlet (16" from floor) → sofa ~7.5 ft long, seat height ~18–20".
+Itemized (Method A): sofa 2.5 + lamp/table 0.5 + mirror 0.25 + trash can 0.1 + small box 0.05 = 3.4 CY.
+Consolidated cross-check (Method B): items loaded efficiently ≈ 3.0–3.5 CY. Methods agree (<20% apart).
+CORRECT ANSWER: low 3, likely 3.5, high 4 — confidence High.
+(Common error to avoid: do NOT multiply the sofa's 2.5 CY by the 0.7 furniture factor — catalog values are already truck-loaded.)
+
+EXAMPLE 2 — Garage cleanout (3 photos, same garage from different angles):
+Half of a 2-car garage: ~30 standard moving boxes, 1 dresser, 2 bookshelves, loose tool pile 4'×3'×3', ~10 full 32-gal bags.
+All 3 photos show the SAME items from different angles — counted ONCE.
+Itemized: boxes 30×0.06 = 1.8 + dresser 1.5 + bookshelves 2×0.9 = 1.8 + tools (36 ft³ = 1.3 CY raw × 0.6) = 0.8 + bags 10×0.15 = 1.5 → 7.4 CY.
+Room-fill: 10'×20' footprint averaging 3' high = 600 ft³ = 22 CY raw — but loose garage stacking has huge air gaps → × 0.4 ≈ 8.9 CY loaded.
+Methods 7.4 vs 8.9 → ~20% apart → lean toward the higher: likely 8.
+CORRECT ANSWER: low 7, likely 8, high 9.5 — confidence Medium.
+
+EXAMPLE 3 — Commercial dumpster overflow (restaurant):
+~20 full 32-gal trash bags on the ground around two 6-yd dumpsters, flattened cardboard pile 6'×4'×3', 2 wooden pallets.
+Anchors: dumpster body (~6 ft long × 5 ft high), bollards.
+Itemized: bags 20×0.15 = 3.0 + cardboard (72 ft³ = 2.7 CY raw × 0.85) = 2.3 + pallets 0.5 → 5.8 CY.
+Area method: debris field 12'×8' averaging 2.5' high = 240 ft³ = 8.9 CY raw × 0.7 ≈ 6.2 CY.
+Methods agree → likely 6.
+CORRECT ANSWER: low 5, likely 6, high 7.5 — confidence High.
 
 ═══════════════════════════════════════
 OUTPUT FORMAT — RESPOND IN VALID JSON ONLY
@@ -403,10 +434,24 @@ export async function estimateVolume(params) {
     throw new GeminiParseError("Gemini response missing required numeric fields (low/likely/high)");
   }
 
+  // Sanity-check the range: non-negative, plausible, correctly ordered
+  let { low, likely, high } = parsed;
+  if (![low, likely, high].every((n) => Number.isFinite(n) && n >= 0)) {
+    throw new GeminiParseError("Gemini returned negative or non-finite volume values");
+  }
+  if (likely > 150 || high > 200) {
+    throw new GeminiParseError(`Gemini returned implausible volumes (likely=${likely}, high=${high})`);
+  }
+  const sorted = [low, likely, high].sort((a, b) => a - b);
+  if (low !== sorted[0] || likely !== sorted[1] || high !== sorted[2]) {
+    console.warn(`Gemini low/likely/high out of order (${low}/${likely}/${high}) — reordered`);
+    [low, likely, high] = sorted;
+  }
+
   return {
-    low: parsed.low ?? 0,
-    high: parsed.high ?? 0,
-    likely: parsed.likely ?? 0,
+    low,
+    high,
+    likely,
     confidence: parsed.confidence ?? "Low",
     confidenceReason: parsed.confidence_reason ?? "",
     truckFraction: parsed.truck_fraction ?? "unknown",
